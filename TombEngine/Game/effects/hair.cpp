@@ -128,7 +128,7 @@ namespace TEN::Effects::Hair
 		else
 		{
 			// Center braid offset.
-			relOffset = Vector3(-4.0f, -4.0f, -48.0f);
+			relOffset = Vector3(0.0f, 10.0f, -26.0f);
 		}
 
 		return relOffset;
@@ -189,8 +189,8 @@ namespace TEN::Effects::Hair
 	std::vector<BoundingSphere> HairUnit::GetSpheres(const ItemInfo& item, bool isYoung)
 	{
 		constexpr auto SPHERE_COUNT		   = 8;
-		constexpr auto TORSO_SPHERE_OFFSET = Vector3i(-10, 0, 25);
-		constexpr auto HEAD_SPHERE_OFFSET  = Vector3i(-2, 0, 0);
+		constexpr auto TORSO_SPHERE_OFFSET = Vector3i(0, 10, 10);
+		constexpr auto HEAD_SPHERE_OFFSET  = Vector3i(0, 0, 0);
 
 		auto spheres = std::vector<BoundingSphere>{};
 		spheres.reserve(SPHERE_COUNT);
