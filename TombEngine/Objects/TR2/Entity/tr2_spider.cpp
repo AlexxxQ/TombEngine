@@ -10,6 +10,7 @@
 #include "Game/items.h"
 #include "Game/itemdata/creature_info.h"
 #include "Game/Lara/lara.h"
+#include "Game/Lara/lara_helpers.h"
 #include "Game/misc.h"
 #include "Game/Setup.h"
 #include "Math/Math.h"
@@ -176,12 +177,39 @@ namespace TEN::Entities::Creatures::TR2
 			case SPIDER_STATE_SHORT_JUMP_ATTACK:
 				creature->MaxTurn = 0;
 
-				if (!creature->Flags && item->TouchBits.TestAny())
+				auto* lara = creature->Enemy && creature->Enemy->IsLara()
+					? GetLaraInfo(creature->Enemy)
+					: nullptr;
+
+				// Reset flag after touch
+				if (!item->TouchBits.TestAny())
 				{
+					creature->Flags = 0;
+					break;
+				}
+
+				// Spider attack
+				if (!creature->Flags)
+				{
+					int damage = SMALL_SPIDER_ATTACK_DAMAGE;
+
+					// if OCB > 0 — damage, no poison
+					if (item->TriggerFlags > 0)
+						damage = item->TriggerFlags;
+
 					DoSpiderBloodEffect(*item);
-					DoDamage(creature->Enemy, SMALL_SPIDER_ATTACK_DAMAGE);
+					DoDamage(creature->Enemy, damage);
 					SoundEffect(SFX_TR2_SPIDER_BITE, &item->Pose);
-					creature->Flags = 1;
+
+					// Poison Lara, if OCB < 0 and if Lara not poisoned
+					if (item->TriggerFlags < 0 &&
+						lara &&
+						lara->Status.Poison == 0)
+					{
+						lara->Status.Poison += SMALL_SPIDER_ATTACK_DAMAGE;
+					}
+
+					creature->Flags = 1; // Poison added
 				}
 
 				break;
@@ -296,11 +324,38 @@ namespace TEN::Entities::Creatures::TR2
 			case SPIDER_STATE_IDLE_ATTACK:
 				creature->MaxTurn = 0;
 
-				if (!creature->Flags && item->TouchBits.TestAny())
+				auto* lara = creature->Enemy && creature->Enemy->IsLara()
+					? GetLaraInfo(creature->Enemy)
+					: nullptr;
+
+				// Reset flag after touch
+				if (!item->TouchBits.TestAny())
 				{
+					creature->Flags = 0;
+					break;
+				}
+
+				// Spider attack
+				if (!creature->Flags)
+				{
+					int damage = BIG_SPIDER_ATTACK_DAMAGE;
+
+					// if OCB > 0 — damage, no poison
+					if (item->TriggerFlags > 0)
+						damage = item->TriggerFlags;
+
 					DoSpiderBloodEffect(*item);
-					DoDamage(creature->Enemy, BIG_SPIDER_ATTACK_DAMAGE);
-					creature->Flags = 1;
+					DoDamage(creature->Enemy, damage);
+
+					// Poison Lara, if OCB < 0 and if Lara not poisoned
+					if (item->TriggerFlags < 0 &&
+						lara &&
+						lara->Status.Poison == 0)
+					{
+						lara->Status.Poison += BIG_SPIDER_ATTACK_DAMAGE / 4;
+					}
+
+					creature->Flags = 1; // // Poison added
 				}
 
 				break;
