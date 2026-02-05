@@ -62,7 +62,8 @@ namespace TEN::Entities::Switches
 		{
 			if (switchItem->ObjectNumber == ID_JUMP_SWITCH)
 			{
-				switchItem->Animation.TargetState = SWITCH_OFF;
+				// JUMP_SWITCH should return to SWITCH_ON (ready state)
+				switchItem->Animation.TargetState = SWITCH_ON;
 				switchItem->Timer = 0;
 				AnimateItem(switchItem);
 			}
