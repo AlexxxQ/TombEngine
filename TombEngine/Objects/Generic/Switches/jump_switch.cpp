@@ -42,7 +42,9 @@ namespace TEN::Entities::Switches
 			(laraItem->Status || laraItem->Animation.IsAirborne) &&
 			laraItem->Animation.Velocity.y > 0 &&
 			laraInfo->Control.HandStatus == HandStatus::Free &&
-			switchItem->Animation.ActiveState == SWITCH_OFF)
+			// Invert condition from SWITCH_OFF to SWITCH_ON, added a check for ONESHOT flag to prevent re-activation.
+			switchItem->Animation.ActiveState == SWITCH_ON &&
+		    !(switchItem->Flags & ONESHOT))
 		{
 			if (TestLaraPosition(JumpSwitchBounds, switchItem, laraItem))
 			{
