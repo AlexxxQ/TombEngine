@@ -84,7 +84,7 @@ bool GetKeyTrigger(ItemInfo* item)
 	return true;
 }
 
-// NOTE: attatchedToSwitch parameter unused.
+// NOTE: attachedToSwitch parameter unused.
 int GetSwitchTrigger(ItemInfo* item, short* itemNumbersPtr, int attatchedToSwitch)
 {
 	short* triggerIndexPtr = GetTriggerIndex(item);
@@ -183,8 +183,7 @@ bool SwitchTrigger(short itemNumber, short timer)
 	// Handle switches.
 	if (item.Status == ITEM_DEACTIVATED)
 	{
-		if (((item.Animation.ActiveState == SWITCH_OFF && item.ObjectNumber != ID_JUMP_SWITCH) ||
-			 (item.Animation.ActiveState == SWITCH_ON && item.ObjectNumber == ID_JUMP_SWITCH)) &&
+		if (item.Animation.ActiveState == SWITCH_OFF && timer > 0)
 			timer > 0)
 		{
 			item.Timer = timer;
@@ -484,6 +483,7 @@ void TestTriggers(int x, int y, int z, FloorInfo* floor, Activator activator, bo
 		switch (triggerType)
 		{
 		case TRIGGER_TYPES::SWITCH:
+		{
 			value = *(data++) & VALUE_BITS;
 
 			if (flags & ONESHOT)
@@ -492,8 +492,9 @@ void TestTriggers(int x, int y, int z, FloorInfo* floor, Activator activator, bo
 			if (!SwitchTrigger(value, timer))
 				return;
 
-			switchOff = (triggerType == TRIGGER_TYPES::SWITCH && timer && g_Level.Items[value].Animation.ActiveState == 1);
+			switchOff = (triggerType == TRIGGER_TYPES::SWITCH && timer && g_Level.Items[value].Animation.ActiveState == SWITCH_ON);
 			break;
+		}
 
 		case TRIGGER_TYPES::MONKEY:
 			if (LaraItem->Animation.ActiveState >= LS_MONKEY_IDLE &&
