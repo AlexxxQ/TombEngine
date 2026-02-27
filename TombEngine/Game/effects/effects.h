@@ -285,6 +285,7 @@ void TriggerSuperJetFlame(ItemInfo* item, int yvel, int deadly);
 void TriggerLaraBlood();
 short DoBloodSplat(int x, int y, int z, short speed, short yRot, short roomNumber);
 void DoLotsOfBlood(int x, int y, int z, int speed, short direction, short roomNumber, int count);
+void SpawnDeathBloodEffect(const ItemInfo& item);
 void ControlWaterfallMist(short itemNumber);
 void TriggerWaterfallMist(const ItemInfo& item);
 void TriggerWaterfallMist(Vector3 pos, int size, int width, float angle, Vector4 color);
