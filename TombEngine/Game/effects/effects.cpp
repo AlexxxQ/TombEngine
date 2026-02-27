@@ -1203,6 +1203,16 @@ void DoLotsOfBlood(int x, int y, int z, int speed, short direction, short roomNu
 	}
 }
 
+void SpawnDeathBloodEffect(const ItemInfo& item)
+{
+	if (!(GetRandomControl() & 7))
+	{
+		DoLotsOfBlood(
+			item.Pose.Position.x, item.Pose.Position.y - 64, item.Pose.Position.z,
+			0, (short)(GetRandomControl() << 1), item.RoomNumber, 1);
+	}
+}
+					
 void TriggerLaraBlood()
 {
 	int node = 1;
