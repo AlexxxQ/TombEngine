@@ -70,6 +70,7 @@ namespace TEN::Entities::Creatures::TR3
 		{
 			if (item->Animation.ActiveState != COBRA_STATE_DEATH)
 				SetAnimation(item, COBRA_ANIM_DEATH);
+				SpawnDeathBloodEffect(*item);
 		}
 		else
 		{
