@@ -18,7 +18,7 @@ namespace TEN::Entities::Creatures::TR3
 	constexpr auto COBRA_BITE_ATTACK_DAMAGE	 = 80;
 	constexpr auto COBRA_BITE_POISON_POTENCY = 8;
 
-	constexpr auto COBRA_ATTACK_RANGE = SQUARE(BLOCK(1.0f));
+	constexpr auto COBRA_ATTACK_RANGE = SQUARE(BLOCK(1));
 	constexpr auto COBRA_AWARE_RANGE  = SQUARE(BLOCK(1.5f));
 	constexpr auto COBRA_SLEEP_RANGE  = SQUARE(BLOCK(2.5f));
 
@@ -95,7 +95,7 @@ namespace TEN::Entities::Creatures::TR3
 			GetCreatureMood(item, &AI, 1);
 			CreatureMood(item, &AI, 1);
 
-			if ((isEnemyVisible || abs(AI.verticalDistance) < CLICK(2)) &&
+			if (creature->Enemy != nullptr &&
 				item->Animation.ActiveState != COBRA_STATE_SLEEP)
 			{
 				creature->Target.x = creature->Enemy->Pose.Position.x;
