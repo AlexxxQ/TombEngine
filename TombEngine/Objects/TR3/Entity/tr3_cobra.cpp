@@ -15,14 +15,14 @@
 
 namespace TEN::Entities::Creatures::TR3
 {
-	constexpr auto COBRA_BITE_ATTACK_DAMAGE	 = 80;
+	constexpr auto COBRA_BITE_ATTACK_DAMAGE = 80;
 	constexpr auto COBRA_BITE_POISON_POTENCY = 8;
 
 	constexpr auto COBRA_ATTACK_RANGE = SQUARE(BLOCK(1));
-	constexpr auto COBRA_AWARE_RANGE  = SQUARE(BLOCK(1.5f));
-	constexpr auto COBRA_SLEEP_RANGE  = SQUARE(BLOCK(2.5f));
+	constexpr auto COBRA_AWARE_RANGE = SQUARE(BLOCK(1.5f));
+	constexpr auto COBRA_SLEEP_RANGE = SQUARE(BLOCK(2.5f));
 
-	constexpr auto COBRA_DISTURBANCE_VELOCITY = 15.0f;
+	constexpr auto COBRA_DISTURBANCE_VELOCITY = 15.0f;		// If Lara is moving faster than this, the cobra will be disturbed and may attack.
 	constexpr auto COBRA_SLEEP_FRAME = 45;
 
 	const auto CobraBite = CreatureBiteInfo(Vector3::Zero, 13);
@@ -76,7 +76,7 @@ namespace TEN::Entities::Creatures::TR3
 			AI_INFO AI;
 			CreatureAIInfo(item, &AI);
 
-			bool isEnemyMoving  = false;
+			bool isEnemyMoving = false;
 			bool isEnemyVisible = false;
 
 			if (creature->Enemy != nullptr)
@@ -85,11 +85,8 @@ namespace TEN::Entities::Creatures::TR3
 				auto target = GameVector(item->Pose.Position, item->RoomNumber);
 				isEnemyVisible = LOS(&origin, &target);
 
-				if (creature->Enemy->Animation.Velocity.z > COBRA_DISTURBANCE_VELOCITY ||
-					abs(creature->Enemy->Animation.Velocity.y) > COBRA_DISTURBANCE_VELOCITY)
-				{
+				if (creature->Enemy->Animation.Velocity.z > COBRA_DISTURBANCE_VELOCITY)
 					isEnemyMoving = true;
-				}
 			}
 
 			GetCreatureMood(item, &AI, 1);
@@ -112,16 +109,15 @@ namespace TEN::Entities::Creatures::TR3
 					item->Pose.Orientation.y += ANGLE(10.0f);
 			}
 
-			switch (item->Animation.ActiveState)
+				switch (item->Animation.ActiveState)
 			{
 			case COBRA_STATE_IDLE:
 				creature->Flags = 0;
 
 				if (AI.distance > COBRA_SLEEP_RANGE)
 					item->Animation.TargetState = COBRA_STATE_SLEEP;
-				else if (creature->Enemy->HitPoints > 0 && (isEnemyVisible || abs(AI.verticalDistance) < CLICK(2)) &&
-					((AI.ahead && AI.distance < COBRA_ATTACK_RANGE) ||
-						item->HitStatus || isEnemyMoving))
+				else if (creature->Enemy->HitPoints > 0 && (isEnemyVisible || abs(AI.verticalDistance) <= CLICK(2)) &&
+					((AI.ahead && AI.distance < COBRA_ATTACK_RANGE) || item->HitStatus || isEnemyMoving))
 				{
 					item->Animation.TargetState = COBRA_STATE_ATTACK;
 				}
