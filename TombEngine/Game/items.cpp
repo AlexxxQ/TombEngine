@@ -652,9 +652,7 @@ void InitializeItem(short itemNumber)
 	auto* item = &g_Level.Items[itemNumber];
 	const auto& object = Objects[item->ObjectNumber];
 
-	if (!object.Animations.empty())
-		SetAnimation(item, 0);
-
+	SetAnimation(item, 0);
 	item->Animation.RequiredState = NO_VALUE;
 	item->Animation.Velocity = Vector3::Zero;
 	item->Animation.AnimObjectID = item->ObjectNumber;
@@ -901,6 +899,7 @@ void UpdateAllItems()
 
 			if (item.AfterDeath > 0 && item.AfterDeath < ITEM_DEATH_TIMEOUT && !(Wibble & 3))
 				item.AfterDeath++;
+
 			if (item.AfterDeath == ITEM_DEATH_TIMEOUT)
 				KillItem(item.Index);
 		}
@@ -939,7 +938,7 @@ bool UpdateItemRoom(short itemNumber)
 	auto yOffset = GameBoundingBox(item).GetCenter().y;
 
 	auto roomNumber = GetPointCollision(
-		Vector3i(item->Pose.Position.x, item->Pose.Position.y + yOffset, item->Pose.Position.z),
+		Vector3i(item->Pose.Position.x, item->Pose.Position.y - yOffset, item->Pose.Position.z),
 		item->RoomNumber).GetRoomNumber();
 
 	if (roomNumber != item->RoomNumber)
@@ -986,7 +985,7 @@ void DoDamage(ItemInfo* item, int damage, bool silent)
 			SaveGame::Statistics.Level.DamageTaken += damage;
 		}
 
-		if (!silent && (GlobalCounter - lastHurtTime) > (FPS * 2 + Random::GenerateInt(0, FPS)))
+		if (!silent && (GlobalCounter - lastHurtTime) > (FPS + Random::GenerateInt(0, FPS / 2)))
 		{
 			SoundEffect(SFX_TR4_LARA_INJURY, &LaraItem->Pose);
 			lastHurtTime = GlobalCounter;
