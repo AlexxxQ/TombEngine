@@ -1731,6 +1731,90 @@ void RumbleLaraHealthCondition(ItemInfo* item)
 		Rumble(POWER, DELAY);
 }
 
+void SetPlayerHitEffect(ItemInfo& laraItem, const ItemInfo& attacker)
+{
+	if (!laraItem.IsLara() || laraItem.HitPoints <= 0)
+		return;
+
+	auto& player = GetLaraInfo(laraItem);
+
+	// Don't trigger in water or swamp.
+	if (player.Control.WaterStatus == WaterStatus::TreadWater ||
+		player.Control.WaterStatus == WaterStatus::Underwater  ||
+		(player.Control.WaterStatus == WaterStatus::Wade && TestEnvironment(ENV_FLAG_SWAMP, &laraItem)))
+	{
+		return;
+	}
+
+	// Don't trigger while airborne — ground HIT animations assume solid footing.
+	if (laraItem.Animation.IsAirborne)
+		return;
+
+	// Don't trigger while already playing a hit reaction.
+	switch (laraItem.Animation.ActiveState)
+	{
+	case LS_HIT_FRONT:
+	case LS_HIT_BACK:
+	case LS_HIT_LEFT:
+	case LS_HIT_RIGHT:
+	case LS_CROUCH_HIT_FRONT:
+	case LS_CROUCH_HIT_BACK:
+	case LS_CROUCH_HIT_LEFT:
+	case LS_CROUCH_HIT_RIGHT:
+		return;
+	}
+
+	// Don't re-trigger within 0.5s of a previous hit reaction exit.
+	if (GlobalCounter < player.HitImmunityEndTick)
+		return;
+
+	// Calculate direction from attacker to Lara in Lara's reference frame.
+	short hitAngle = phd_atan(
+		laraItem.Pose.Position.z - attacker.Pose.Position.z,
+		laraItem.Pose.Position.x - attacker.Pose.Position.x
+	) - laraItem.Pose.Orientation.y;
+
+	// Map angle quadrant to cardinal direction, animation, and state.
+	CardinalDirection hitDir;
+	int				  hitAnimNumber;
+	LaraState		  hitState;
+
+	bool isCrouching = player.Control.IsLow;
+
+	if (abs(hitAngle) <= ANGLE(45.0f))
+	{
+		hitDir		  = SOUTH;
+		hitAnimNumber = isCrouching ? LA_CROUCH_HIT_BACK  : LA_STAND_HIT_BACK;
+		hitState	  = isCrouching ? LS_CROUCH_HIT_BACK  : LS_HIT_BACK;
+	}
+	else if (abs(hitAngle) >= ANGLE(135.0f))
+	{
+		hitDir		  = NORTH;
+		hitAnimNumber = isCrouching ? LA_CROUCH_HIT_FRONT : LA_STAND_HIT_FRONT;
+		hitState	  = isCrouching ? LS_CROUCH_HIT_FRONT : LS_HIT_FRONT;
+	}
+	else if (hitAngle > 0)
+	{
+		hitDir		  = EAST;
+		hitAnimNumber = isCrouching ? LA_CROUCH_HIT_LEFT  : LA_STAND_HIT_LEFT;
+		hitState	  = isCrouching ? LS_CROUCH_HIT_LEFT  : LS_HIT_LEFT;
+	}
+	else
+	{
+		hitDir		  = WEST;
+		hitAnimNumber = isCrouching ? LA_CROUCH_HIT_RIGHT : LA_STAND_HIT_RIGHT;
+		hitState	  = isCrouching ? LS_CROUCH_HIT_RIGHT : LS_HIT_RIGHT;
+	}
+
+	player.HitDirection			 = hitDir;
+	player.HitFrame				 = 0;
+	player.HitPushFrames		 = 0;
+	player.HitAttackerItemNumber = attacker.Index;
+
+	SetAnimation(&laraItem, hitAnimNumber);
+	laraItem.Animation.ActiveState = laraItem.Animation.TargetState = hitState;
+}
+
 // NOTE: Formula uses kinematic equation of motion for vertical motion under constant acceleration.
 float GetPlayerJumpVelocity(float jumpHeight)
 {
