@@ -10,6 +10,7 @@
 #include "Game/effects/effects.h"
 #include "Game/items.h"
 #include "Game/Lara/lara.h"
+#include "Game/Lara/lara_helpers.h"
 #include "Game/Setup.h"
 #include "Math/Math.h"
 #include "Sound/sound.h"
@@ -147,6 +148,7 @@ namespace TEN::Entities::Traps
 			playerItem->TouchBits.ClearAll();
 
 			SoundEffect(SFX_TR4_LARA_GRABFEET, &playerItem->Pose);
+			SetPlayerHitEffect(*playerItem, item);
 
 			// Push player.
 			float vel = playerItem->Animation.Velocity.z;
