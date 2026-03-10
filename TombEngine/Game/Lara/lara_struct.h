@@ -225,6 +225,16 @@ enum LaraState
 
 	LS_PULLEY_UNGRAB = 198,
 
+	// Hit reactions.
+	LS_HIT_FRONT = 199,
+	LS_HIT_BACK = 200,
+	LS_HIT_LEFT = 201,
+	LS_HIT_RIGHT = 202,
+	LS_CROUCH_HIT_FRONT = 203,
+	LS_CROUCH_HIT_BACK = 204,
+	LS_CROUCH_HIT_LEFT = 205,
+	LS_CROUCH_HIT_RIGHT = 206,
+
 	NUM_LARA_STATES
 };
 
@@ -1365,10 +1375,14 @@ struct LaraInfo
 	std::array<ItemInfo*, TARGET_COUNT_MAX> LastTargets = {};
 
 	// TODO: Rewrite and restore spasm effect. Also move to PlayerEffectData?
-	int HitFrame	 = 0; // Frame index.
-	int HitDirection = 0; // Cardinal direction.
+	int HitFrame			  = 0;		  // Frame index.
+	int HitDirection		  = 0;		  // Cardinal direction.
+	int HitAttackerItemNumber = NO_VALUE; // Item number of creature that triggered the current hit reaction.
+	int HitKeyHoldFrames	  = 0;		  // Frames the player has held a directional key during the hit reaction.
+	int HitPushFrames		  = 0;		  // Frames Lara has been pushed by the attacker during a standing hit reaction.
+	int HitImmunityEndTick	  = 0;		  // GlobalCounter tick until which hit reactions are suppressed after exit.
 
-	// Item number? Only ever set to NO_VALUE or 1. Probably anim object ID. Might not be needed since AnimObjectID is kept in item.Animation.
+	// Item number? Only ever set to NO_VALUE or 1.
 	int ExtraAnim = 0;
 
 	signed char Location		= 0;
