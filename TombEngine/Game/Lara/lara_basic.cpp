@@ -17,6 +17,7 @@
 #include "Scripting/Include/Flow/ScriptInterfaceFlowHandler.h"
 #include "Game/Setup.h"
 #include "Sound/sound.h"
+#include "Specific/clock.h"
 #include "Specific/Input/Input.h"
 #include "Specific/level.h"
 
@@ -1005,7 +1006,189 @@ void lara_as_splat(ItemInfo* item, CollisionInfo* coll)
 	ResetPlayerTurnRateY(*item);
 }
 
-// State:		LS_SPLAT (12)
+// State:		LS_HIT_FRONT (199), LS_HIT_BACK (200), LS_HIT_LEFT (201), LS_HIT_RIGHT (202),
+//				LS_CROUCH_HIT_FRONT (203), LS_CROUCH_HIT_BACK (204), LS_CROUCH_HIT_LEFT (205), LS_CROUCH_HIT_RIGHT (206)
+// Collision:	lara_col_hit()
+void lara_as_hit(ItemInfo* item, CollisionInfo* coll)
+{
+	auto& player = GetLaraInfo(*item);
+
+	player.Control.Look.Mode = LookMode::None;
+	coll->Setup.EnableObjectPush = true;
+	coll->Setup.EnableSpasm = false;
+
+	player.HitFrame = item->Animation.FrameNumber;
+
+	bool isCrouchHit =
+		item->Animation.ActiveState == LS_CROUCH_HIT_FRONT ||
+		item->Animation.ActiveState == LS_CROUCH_HIT_BACK  ||
+		item->Animation.ActiveState == LS_CROUCH_HIT_LEFT  ||
+		item->Animation.ActiveState == LS_CROUCH_HIT_RIGHT;
+
+	item->Animation.TargetState = isCrouchHit ? LS_CROUCH_IDLE : LS_IDLE;
+
+	// Break free when the player holds any directional key for at least 0.5 s (FPS / 2 frames).
+	if (IsDirectionalActionHeld())
+	{
+		player.HitKeyHoldFrames++;
+		if (player.HitKeyHoldFrames >= FPS / 2)
+		{
+			SetAnimation(item, isCrouchHit ? LA_CROUCH_IDLE : LA_STAND_IDLE);
+			player.HitAttackerItemNumber = NO_VALUE;
+			player.HitKeyHoldFrames = 0;
+			player.HitPushFrames = 0;
+			player.HitImmunityEndTick = GlobalCounter + FPS / 2;
+			if (isCrouchHit)
+				player.Control.HandStatus = HandStatus::Free;
+			return;
+		}
+	}
+	else
+	{
+		player.HitKeyHoldFrames = 0;
+	}
+
+	// Force exit to crouch idle at animation end to prevent standing up in low spaces.
+	// HitKeyHoldFrames is intentionally NOT reset here so it accumulates across
+	// repeated short hits, allowing break-free to trigger over multiple cycles.
+	if (isCrouchHit && TestLastFrame(*item))
+	{
+		SetAnimation(item, LA_CROUCH_IDLE);
+		player.HitAttackerItemNumber = NO_VALUE;
+		player.HitImmunityEndTick = GlobalCounter + FPS;
+		player.Control.HandStatus = HandStatus::Free;
+		return;
+	}
+
+	// If no attacker is registered (e.g. WAD-only hit), force exit to idle when the
+	// animation loops back to itself (TR1 cyclic animations have no WAD dispatch to idle).
+	if (player.HitAttackerItemNumber == NO_VALUE)
+	{
+		const auto& anim = GetAnimData(*item);
+		if (TestLastFrame(*item) && anim.NextAnimNumber == item->Animation.AnimNumber)
+		{
+			SetAnimation(item, LA_STAND_IDLE);
+			player.HitImmunityEndTick = GlobalCounter + FPS / 2;
+		}
+	}
+}
+
+// State:		LS_HIT_FRONT (199), LS_HIT_BACK (200), LS_HIT_LEFT (201), LS_HIT_RIGHT (202),
+//				LS_CROUCH_HIT_FRONT (203), LS_CROUCH_HIT_BACK (204), LS_CROUCH_HIT_LEFT (205), LS_CROUCH_HIT_RIGHT (206)
+// Control:		lara_as_hit()
+void lara_col_hit(ItemInfo* item, CollisionInfo* coll)
+{
+	auto& player = GetLaraInfo(*item);
+
+	player.Control.MoveAngle = item->Pose.Orientation.y;
+	coll->Setup.BlockFloorSlopeUp	= true;
+	coll->Setup.BlockFloorSlopeDown = true;
+	coll->Setup.LowerFloorBound		= NO_LOWER_BOUND;
+	coll->Setup.UpperFloorBound		= -STEPUP_HEIGHT;
+	coll->Setup.LowerCeilingBound	= 0;
+	coll->Setup.ForwardAngle		= player.Control.MoveAngle;
+	GetCollisionInfo(coll, item);
+	ShiftItem(item, coll);
+
+	if (CanFall(*item, *coll))
+	{
+		SetLaraFallAnimation(item);
+		return;
+	}
+
+	if (player.HitAttackerItemNumber == NO_VALUE)
+		return;
+
+	auto& attacker = g_Level.Items[player.HitAttackerItemNumber];
+
+	bool isCrouchHit =
+		item->Animation.ActiveState == LS_CROUCH_HIT_FRONT ||
+		item->Animation.ActiveState == LS_CROUCH_HIT_BACK  ||
+		item->Animation.ActiveState == LS_CROUCH_HIT_LEFT  ||
+		item->Animation.ActiveState == LS_CROUCH_HIT_RIGHT;
+
+	// Exit to idle only when contact is lost or the attacker is no longer active.
+	bool attackerInContact =
+		attacker.Active &&
+		attacker.Collidable &&
+		attacker.TouchBits.TestAny();
+
+	if (attackerInContact)
+	{
+		// Push Lara with the attacker's animation velocity, then check room geometry.
+		// If the new position collides with a wall, revert to prevent geometry penetration.
+		// Skip translate when velocity is zero to avoid degenerate phd_atan(0,0).
+		if (abs(attacker.Animation.Velocity.z) > 1.0f || abs(attacker.Animation.Velocity.x) > 1.0f)
+		{
+			auto prevPos = item->Pose.Position;
+
+			item->Pose.Translate(
+				attacker.Pose.Orientation.y,
+				attacker.Animation.Velocity.z,
+				0.0f,
+				attacker.Animation.Velocity.x);
+
+			auto savedAngle          = coll->Setup.ForwardAngle;
+			auto savedLowerBound     = coll->Setup.LowerFloorBound;
+			auto savedBlockSlopeDown = coll->Setup.BlockFloorSlopeDown;
+
+			coll->Setup.ForwardAngle      = phd_atan(item->Pose.Position.z - prevPos.z, item->Pose.Position.x - prevPos.x);
+			coll->Setup.LowerFloorBound   = NO_LOWER_BOUND;
+			coll->Setup.BlockFloorSlopeDown = false;
+			GetCollisionInfo(coll, item);
+
+			coll->Setup.ForwardAngle      = savedAngle;
+			coll->Setup.LowerFloorBound   = savedLowerBound;
+			coll->Setup.BlockFloorSlopeDown = savedBlockSlopeDown;
+
+			if (coll->CollisionType == CollisionType::Front ||
+				coll->CollisionType == CollisionType::Left  ||
+				coll->CollisionType == CollisionType::Right ||
+				coll->Middle.Floor == NO_HEIGHT)
+			{
+				item->Pose.Position = prevPos;
+			}
+		}
+
+		if (!isCrouchHit)
+		{
+			bool attackerHasVelocity = abs(attacker.Animation.Velocity.z) > 1.0f || abs(attacker.Animation.Velocity.x) > 1.0f;
+			if (!attackerHasVelocity)
+			{
+				// Stationary attack: play only the first third of the animation.
+				const auto& anim = GetAnimData(*item);
+				if (item->Animation.FrameNumber >= anim.EndFrameNumber / 3)
+				{
+					SetAnimation(item, LA_STAND_IDLE);
+					player.HitAttackerItemNumber = NO_VALUE;
+					player.HitKeyHoldFrames = 0;
+					player.HitPushFrames = 0;
+					player.HitImmunityEndTick = GlobalCounter + FPS / 2;
+				}
+			}
+			else if (++player.HitPushFrames >= 34)
+			{
+				SetAnimation(item, LA_STAND_IDLE);
+				player.HitAttackerItemNumber = NO_VALUE;
+				player.HitKeyHoldFrames = 0;
+				player.HitPushFrames = 0;
+				player.HitImmunityEndTick = GlobalCounter + FPS / 2;
+			}
+		}
+	}
+	else
+	{
+		SetAnimation(item, isCrouchHit ? LA_CROUCH_IDLE : LA_STAND_IDLE);
+		player.HitAttackerItemNumber = NO_VALUE;
+		player.HitKeyHoldFrames = 0;
+		player.HitPushFrames = 0;
+		player.HitImmunityEndTick = GlobalCounter + FPS / 2;
+		if (isCrouchHit)
+			player.Control.HandStatus = HandStatus::Free;
+	}
+}
+
+// State:		LS_SPLAT
 // Control:		lara_as_splat()
 void lara_col_splat(ItemInfo* item, CollisionInfo* coll)
 {
