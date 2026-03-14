@@ -29,6 +29,7 @@ namespace TEN::Entities::Creatures::TR1
 	constexpr auto KID_ACCEL_CHANCE = 1 / 128.0f;
 
 	constexpr auto KID_TURN_RATE_MAX = ANGLE(4.0f);
+	constexpr auto KID_WALL_TURN_RATE_MAX = ANGLE(12.0f);
 
 	const auto KidGunBiteRight = CreatureBiteInfo(Vector3(0, 170, 34), 7);
 	const auto KidGunBiteLeft  = CreatureBiteInfo(Vector3(0, 170, 37), 4);
@@ -229,9 +230,27 @@ namespace TEN::Entities::Creatures::TR1
 		UpdateItemRoom(item.ItemFlags[0]);
 		AnimateItem(skateItem);
 
+		bool isSkateboarding =
+			item.Animation.ActiveState == KID_STATE_SKATE ||
+			item.Animation.ActiveState == KID_STATE_SKATE_ACCEL ||
+			item.Animation.ActiveState == KID_STATE_SKATE_SHOOT;
+		bool isMovingForward = (item.Animation.Velocity.z > 0.0f);
+		auto prevPos = item.Pose.Position;
+
 		CreatureJoint(&item, 0, extraHeadRot.y);
 		CreatureJoint(&item, 1, extraTorsoRot.x);
 		CreatureJoint(&item, 2, extraTorsoRot.y);
 		CreatureAnimation(itemNumber, headingAngle, 0);
+
+		if (isSkateboarding && isMovingForward &&
+			item.Pose.Position.x == prevPos.x &&
+			item.Pose.Position.z == prevPos.z)
+		{
+			creature.MaxTurn = KID_WALL_TURN_RATE_MAX;
+		}
+		else if (isSkateboarding)
+		{
+			creature.MaxTurn = KID_TURN_RATE_MAX;
+		}
 	}
 }
