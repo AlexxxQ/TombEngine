@@ -100,18 +100,18 @@ namespace TEN::Entities::Creatures::TR3
 			if (Lara.Control.WaterStatus == WaterStatus::Dry)
 			{
 				// Lara is on dry land; diver may surface to target her.
-				auto origin = GameVector(
+				auto originPos = Vector3i(
 					item->Pose.Position.x,
 					item->Pose.Position.y - CLICK(1),
-					item->Pose.Position.z,
-					item->RoomNumber);
+					item->Pose.Position.z);
+				auto origin = GameVector(originPos, GetPointCollision(originPos, item->RoomNumber).GetRoomNumber());
 				auto target = GameVector(
 					LaraItem->Pose.Position.x,
 					LaraItem->Pose.Position.y - (LARA_HEIGHT - LARA_HEADROOM),
 					LaraItem->Pose.Position.z);
 
 				outOfReach = Vector3i::Distance(origin.ToVector3i(), target.ToVector3i()) >= SCUBA_DIVER_VISIBILITY_DISTANCE;
-				shoot = LOS(&origin, &target) && !outOfReach;
+				shoot = LOS(&origin, &target) && !outOfReach && creature->Enemy->HitPoints > 0;
 
 				// Cancel shoot if not facing towards Lara.
 				if (ai.angle < -ANGLE(45.0f) || ai.angle > ANGLE(45.0f))
@@ -124,7 +124,7 @@ namespace TEN::Entities::Creatures::TR3
 				auto target = GameVector(LaraItem->Pose.Position);
 
 				outOfReach = Vector3i::Distance(origin.ToVector3i(), target.ToVector3i()) >= SCUBA_DIVER_VISIBILITY_DISTANCE;
-				shoot = LOS(&origin, &target) && !outOfReach;
+				shoot = LOS(&origin, &target) && !outOfReach && creature->Enemy->HitPoints > 0;
 			}
 
 			// Only set target to Lara if diver can see her.
