@@ -1364,7 +1364,7 @@ struct LaraInfo
 	std::array<ItemInfo*, TARGET_COUNT_MAX> TargetList	= {};
 	std::array<ItemInfo*, TARGET_COUNT_MAX> LastTargets = {};
 
-	// TODO: Rewrite and restore spasm effect. Also move to PlayerEffectData?
+	// Spasm (hit) effect data.
 	int HitFrame	 = 0; // Frame index.
 	int HitDirection = 0; // Cardinal direction.
 
