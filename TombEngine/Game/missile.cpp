@@ -103,10 +103,12 @@ void ControlMissile(short fxNumber)
 		{
 			if (fx.objectNumber == ID_KNIFETHROWER_KNIFE)
 			{
+				DoBloodSplat(fx.pos.Position.x, fx.pos.Position.y, fx.pos.Position.z, fx.speed, fx.pos.Orientation.y, fx.roomNumber);
 				DoDamage(LaraItem, KNIFE_DAMAGE);
 			}
 			else if (fx.objectNumber == ID_SCUBA_HARPOON)
 			{
+				DoBloodSplat(fx.pos.Position.x, fx.pos.Position.y, fx.pos.Position.z, fx.speed, fx.pos.Orientation.y, fx.roomNumber);
 				DoDamage(LaraItem, DIVER_HARPOON_DAMAGE);
 			}
 			else if (fx.objectNumber == ID_PROJ_BOMB)
