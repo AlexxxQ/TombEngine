@@ -297,6 +297,43 @@ void Renderer::UpdateLaraAnimations(bool force)
 		}
 	}
 
+	// Override animation with spasm (hit) effect when active.
+	if (Lara.HitDirection >= 0)
+	{
+		// Select spaz animation based on hit direction and posture.
+		int spazmAnimNumber = 0;
+
+		bool isCrawling = std::find(CRAWL_STATES.begin(), CRAWL_STATES.end(),
+			LaraItem->Animation.ActiveState) != CRAWL_STATES.end();
+
+		switch (Lara.HitDirection)
+		{
+		case NORTH:
+			spazmAnimNumber = isCrawling ? LA_CRAWL_HIT_FRONT :
+				(Lara.Control.IsLow ? LA_CROUCH_HIT_FRONT : LA_STAND_HIT_FRONT);
+			break;
+
+		case SOUTH:
+			spazmAnimNumber = isCrawling ? LA_CRAWL_HIT_BACK :
+				(Lara.Control.IsLow ? LA_CROUCH_HIT_BACK : LA_STAND_HIT_BACK);
+			break;
+
+		case EAST:
+			spazmAnimNumber = isCrawling ? LA_CRAWL_HIT_LEFT :
+				(Lara.Control.IsLow ? LA_CROUCH_HIT_LEFT : LA_STAND_HIT_LEFT);
+			break;
+
+		default: // WEST
+			spazmAnimNumber = isCrawling ? LA_CRAWL_HIT_RIGHT :
+				(Lara.Control.IsLow ? LA_CROUCH_HIT_RIGHT : LA_STAND_HIT_RIGHT);
+			break;
+		}
+
+		const auto& spazmAnim = GetAnimData(LaraItem->Animation.AnimObjectID, spazmAnimNumber);
+		auto spazmFrameData = spazmAnim.GetKeyframeInterpolationData(Lara.HitFrame);
+		UpdateAnimation(&rItem, playerObject, spazmFrameData, UINT_MAX);
+	}
+
 	// Copy matrices in player object.
 	for (int m = 0; m < NUM_LARA_MESHES; m++)
 		playerObject.AnimationTransforms[m] = rItem.AnimTransforms[m];
