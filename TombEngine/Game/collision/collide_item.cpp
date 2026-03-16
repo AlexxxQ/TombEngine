@@ -698,12 +698,22 @@ bool ItemPushItem(ItemInfo* item0, ItemInfo* item1, CollisionInfo* coll, bool en
 	{
 		auto& player = GetLaraInfo(*item1);
 
-		// TODO: Rewrite player spasm effect.
-		player.HitDirection = NORTH;
-		player.HitFrame = 0;
-		
-		// Dummy hurt call for sound.
-		DoDamage(item1, 0); 
+		// Calculate direction from enemy center to player relative to player's facing.
+		int cx = (bounds.X1 + bounds.X2) / 2;
+		int cz = (bounds.Z1 + bounds.Z2) / 2;
+		float sinY = phd_sin(item0->Pose.Orientation.y);
+		float cosY = phd_cos(item0->Pose.Orientation.y);
+		int dx = deltaPos.x - (int)(cosY * cx + sinY * cz);
+		int dz = deltaPos.z - (int)(cosY * cz - sinY * cx);
+
+		player.HitDirection = (unsigned short)(item1->Pose.Orientation.y + ANGLE(180.0f) - (short)phd_atan(dz, dx) + ANGLE(45.0f)) >> 14;
+
+		if (player.HitFrame == 0)
+			DoDamage(item1, 0);
+
+		player.HitFrame++;
+		if (player.HitFrame > 34)
+			player.HitFrame = 34;
 	}
 
 	coll->Setup.LowerFloorBound = NO_LOWER_BOUND;
@@ -1978,7 +1988,7 @@ void DoObjectCollision(ItemInfo* item, CollisionInfo* coll)
 		}
 	}
 
-	// TODO: Rewrite player spasm effect.
+	// Reset spasm effect when no creature collision occurred this frame.
 	if (isPlayer)
 	{
 		auto& player = GetLaraInfo(*item);
@@ -2028,16 +2038,24 @@ void CreatureCollision(short itemNumber, ItemInfo* laraItem, CollisionInfo* coll
 	}
 	else if (doPlayerCollision && coll->Setup.EnableSpasm)
 	{
-		// TODO: Rewrite player spasm effect.
-		return;
-
 		const auto& bounds = GameBoundingBox(item);
 		if (bounds.GetHeight() > CLICK(1))
 		{
-			auto* lara = GetLaraInfo(laraItem);
+			auto& player = GetLaraInfo(*laraItem);
 
-			lara->HitDirection = NORTH;
-			lara->HitFrame = 0;
+			// Calculate direction from enemy center to player relative to player's facing.
+			int cx = (bounds.X1 + bounds.X2) / 2;
+			int cz = (bounds.Z1 + bounds.Z2) / 2;
+			float sinY = phd_sin(item->Pose.Orientation.y);
+			float cosY = phd_cos(item->Pose.Orientation.y);
+			int dx = (laraItem->Pose.Position.x - item->Pose.Position.x) - (int)(cosY * cx + sinY * cz);
+			int dz = (laraItem->Pose.Position.z - item->Pose.Position.z) - (int)(cosY * cz - sinY * cx);
+
+			player.HitDirection = (unsigned short)(laraItem->Pose.Orientation.y + ANGLE(180.0f) - (short)phd_atan(dz, dx) + ANGLE(45.0f)) >> 14;
+
+			player.HitFrame++;
+			if (player.HitFrame > 30)
+				player.HitFrame = 30;
 		}
 	}
 }
