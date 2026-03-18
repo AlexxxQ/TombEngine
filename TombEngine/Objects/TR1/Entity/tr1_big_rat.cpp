@@ -113,7 +113,6 @@ namespace TEN::Entities::Creatures::TR1
 		short angle = 0;
 		short head = 0;
 
-		SetBigRatWater(item);
 		bool isOnWater = IsBigRatOnWater(item);
 
 		if (item->HitStatus)
@@ -239,6 +238,13 @@ namespace TEN::Entities::Creatures::TR1
 
 		CreatureJoint(item, 0, head);
 		CreatureAnimation(itemNumber, angle, 0);
+
+		// Update LOT step/drop AFTER pathfinding.
+		if (item->HitPoints > 0)
+		{
+			SetBigRatWater(item);
+			isOnWater = IsBigRatOnWater(item);
+		}
 
 		if (isOnWater)
 		{
