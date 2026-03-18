@@ -2,6 +2,8 @@
 #include "Scripting/Internal/TEN/Objects/Moveable/MoveableObject.h"
 
 #include "Game/collision/floordata.h"
+#include "Game/collision/Point.h"
+#include "Game/control/control.h"
 #include "Game/control/lot.h"
 #include "Game/effects/debris.h"
 #include "Game/effects/item_fx.h"
@@ -22,6 +24,7 @@
 #include "Specific/level.h"
 
 using namespace TEN::Collision::Floordata;
+using namespace TEN::Collision::Point;
 using namespace TEN::Effects::Items;
 using namespace TEN::Math;
 using namespace TEN::Scripting::Types;
@@ -431,14 +434,18 @@ void Moveable::SetPosition(const Vec3& pos, sol::optional<bool> updateRoom)
 
 	if (_initialized && willUpdate)
 	{
-		bool isRoomUpdated = _moveable->IsLara() ? UpdateLaraRoom(_moveable, pos.y) : UpdateItemRoom(_moveable->Index);
-
-		// In case direct portal room update didn't happen and distance between old and new points is significant, do predictive room update.
-		if (!isRoomUpdated && (willUpdate || bigDistance))
+		if (_moveable->IsLara())
 		{
-			int potentialNewRoom = FindRoomNumber(_moveable->Pose.Position, _moveable->RoomNumber);
-			if (potentialNewRoom != _moveable->RoomNumber)
-				SetRoomNumber(potentialNewRoom);
+			UpdateLaraRoom(_moveable, pos.y);
+		}
+		else
+		{
+			// Force immediate room update (bypass ItemNewRoom buffer) so that
+			// creature AI (BoxNumber, Floor) uses the correct room this same frame.
+			bool prevInItemControlLoop = InItemControlLoop;
+			InItemControlLoop = false;
+			UpdateItemRoom(_moveable->Index);
+			InItemControlLoop = prevInItemControlLoop;
 		}
 	}
 
