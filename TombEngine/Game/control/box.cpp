@@ -689,11 +689,16 @@ bool CreaturePathfind(ItemInfo* item, Vector3i prevPos, short angle, short tilt)
 	auto* LOT = &creature->LOT;
 	int* zone = g_Level.Zones[(int)LOT->Zone][(int)FlipStatus].data();
 
-	// Get height of creature's current box (for step/drop checks).
+	// Get height of creature's current position for step/drop checks.
+	// Prefer item->Floor over static box height: it accounts for bridge objects that
+	// raise the physical floor above what the pathfinding box records.
 	int boxHeight;
 	if (item->BoxNumber != NO_VALUE)
 		boxHeight = g_Level.PathfindingBoxes[item->BoxNumber].height;
 	else
+		boxHeight = item->Floor;
+
+	if (item->Floor < boxHeight)
 		boxHeight = item->Floor;
 
 	auto bounds = GameBoundingBox(item);
@@ -712,7 +717,10 @@ bool CreaturePathfind(ItemInfo* item, Vector3i prevPos, short angle, short tilt)
 	if (floor->PathfindingBoxID == NO_VALUE)
 		return false;
 
-	int height = g_Level.PathfindingBoxes[floor->PathfindingBoxID].height;
+	// Use actual floor height to account for bridge objects (bridge height overrides static box height).
+	int height = GetFloorHeight(floor, item->Pose.Position.x, item->Pose.Position.y, item->Pose.Position.z);
+	if (height == NO_HEIGHT)
+		height = g_Level.PathfindingBoxes[floor->PathfindingBoxID].height;
 	int nextHeight = 0;
 
 	// Get the next box on the path (for nonLot creatures, just use current box).
@@ -767,7 +775,10 @@ bool CreaturePathfind(ItemInfo* item, Vector3i prevPos, short angle, short tilt)
 
 		if (floor->PathfindingBoxID != NO_VALUE)
 		{
-			height = g_Level.PathfindingBoxes[floor->PathfindingBoxID].height;
+			// Use actual floor height to account for bridge objects.
+			height = GetFloorHeight(floor, item->Pose.Position.x, item->Pose.Position.y, item->Pose.Position.z);
+			if (height == NO_HEIGHT)
+				height = g_Level.PathfindingBoxes[floor->PathfindingBoxID].height;
 			if (!Objects[item->ObjectNumber].nonLot)
 			{
 				nextBox = LOT->Node[floor->PathfindingBoxID].exitBox;
@@ -1487,7 +1498,10 @@ bool BadFloor(int x, int y, int z, int boxHeight, int nextHeight, short roomNumb
 	if (box->flags & LOT->BlockMask)
 		return true;
 
-	int height = box->height;
+	// Use actual floor height to account for bridge objects (bridge height overrides static box height).
+	int height = GetFloorHeight(floor, x, y, z);
+	if (height == NO_HEIGHT)
+		height = box->height;
 	bool heightResult = false;
 
 	if ((boxHeight - height) > LOT->Step || (boxHeight - height) < LOT->Drop)
