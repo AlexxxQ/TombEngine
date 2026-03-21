@@ -83,7 +83,7 @@ namespace TEN::Entities::Creatures::TR1
 
 	static bool IsBigRatOnWater(ItemInfo* item)
 	{
-		return (GetPointCollision(*item).GetWaterTopHeight() != NO_HEIGHT);
+		return (TestEnvironment(ENV_FLAG_WATER, item) || TestEnvironment(ENV_FLAG_SWAMP, item));
 	}
 
 	static void SetBigRatWater(ItemInfo* item)
@@ -238,10 +238,11 @@ namespace TEN::Entities::Creatures::TR1
 		}
 
 		CreatureJoint(item, 0, head);
-		CreatureAnimation(itemNumber, angle, 0);
 
 		if (isOnWater)
 		{
+			creature->Flags = 1;
+			CreatureAnimation(itemNumber, angle, 0);
 			CreatureUnderwater(item, 0);
 			item->Pose.Position.y = GetPointCollision(*item).GetWaterTopHeight() - BIG_RAT_WATER_SURFACE_OFFSET;
 
@@ -260,7 +261,13 @@ namespace TEN::Entities::Creatures::TR1
 		}
 		else
 		{
-			item->Pose.Position.y = item->Floor;
+			if (creature->Flags)
+			{
+				item->Pose.Position.y = item->Floor;
+				creature->Flags = 0;
+			}
+
+			CreatureVault(itemNumber, angle, 2, 0);
 		}
 	}
 }
