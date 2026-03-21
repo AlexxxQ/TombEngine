@@ -440,12 +440,8 @@ void Moveable::SetPosition(const Vec3& pos, sol::optional<bool> updateRoom)
 		}
 		else
 		{
-			// Force immediate room update (bypass ItemNewRoom buffer) so that
-			// creature AI (BoxNumber, Floor) uses the correct room this same frame.
-			bool prevInItemControlLoop = InItemControlLoop;
-			InItemControlLoop = false;
+			// Force immediate room update.
 			UpdateItemRoom(_moveable->Index);
-			InItemControlLoop = prevInItemControlLoop;
 		}
 	}
 
