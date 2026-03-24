@@ -24,7 +24,7 @@ namespace TEN::Entities::Creatures::TR1
 	constexpr auto WOLF_STALK_RANGE		  = SQUARE(BLOCK(2));
 	constexpr auto WOLF_RUN_RANGE		  = SQUARE(BLOCK(3));
 
-	constexpr auto WOLF_WAKE_CHANCE	 = 1 / 1024.0f;
+	constexpr auto WOLF_WAKE_CHANCE  = 1 / 1024.0f;
 	constexpr auto WOLF_SLEEP_CHANCE = 1 / 1024.0f;
 	constexpr auto WOLF_HOWL_CHANCE  = 1 / 85.0f;
 
@@ -91,14 +91,10 @@ namespace TEN::Entities::Creatures::TR1
 
 		InitializeCreature(itemNumber);
 
-		if (item.TriggerFlags == 1)
-		{
-			item.Animation.FrameNumber = WOLF_SLEEP_FRAME;
-		}
+		if (item.TriggerFlags > 0)
+			SetAnimation(item, WOLF_ANIM_SLEEP, WOLF_SLEEP_FRAME);
 		else
-		{
 			SetAnimation(item, WOLF_ANIM_WALK_FORWARD);
-		}
 	}
 
 	void WolfControl(short itemNumber)
@@ -114,7 +110,7 @@ namespace TEN::Entities::Creatures::TR1
 		short tiltAngle = 0;
 		auto extraHeadRot = EulerAngles::Identity;
 
-		if (item.HitPoints <= 0)
+		if (item.HitPoints <= 0 && item.HitPoints != NOT_TARGETABLE)
 		{
 			if (item.Animation.ActiveState != WOLF_STATE_DEATH)
 				SetAnimation(item, WolfDeathAnims[Random::GenerateInt(0, (int)WolfDeathAnims.size() - 1)]);
@@ -136,20 +132,30 @@ namespace TEN::Entities::Creatures::TR1
 			switch (item.Animation.ActiveState)
 			{
 			case WOLF_STATE_SLEEP:
-				extraHeadRot.y = 0;
+					extraHeadRot.y = 0;
 
-				if (creature.Mood == MoodType::Escape || ai.zoneNumber == ai.enemyZone)
-				{
-					item.Animation.TargetState = WOLF_STATE_IDLE;
-					item.Animation.RequiredState = WOLF_STATE_CROUCH;
-				}
-				else if (Random::TestProbability(WOLF_WAKE_CHANCE))
-				{
-					item.Animation.TargetState = WOLF_STATE_IDLE;
-					item.Animation.RequiredState = WOLF_STATE_WALK;
-				}
+					{
+						auto wakeRange = SQUARE(BLOCK((float)item.TriggerFlags));
 
-				break;
+						if (creature.Mood == MoodType::Escape ||
+							(ai.zoneNumber == ai.enemyZone && ai.distance < wakeRange))
+						{
+							item.HitPoints = object.HitPoints;
+							item.Animation.TargetState = WOLF_STATE_IDLE;
+							item.Animation.RequiredState = WOLF_STATE_CROUCH;
+						}
+						else if (Random::TestProbability(WOLF_WAKE_CHANCE))
+						{
+							item.HitPoints = object.HitPoints;
+							item.Animation.TargetState = WOLF_STATE_IDLE;
+							item.Animation.RequiredState = WOLF_STATE_WALK;
+						}
+
+						if (item.Animation.TargetState == WOLF_STATE_SLEEP)
+							item.HitPoints = NOT_TARGETABLE;
+					}
+
+					break;
 
 			case WOLF_STATE_IDLE:
 				if (item.Animation.RequiredState != NO_VALUE)
