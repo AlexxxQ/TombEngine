@@ -2,11 +2,16 @@
 #include "Objects/Generic/Traps/CrumblingPlatform.h"
 
 #include "Game/collision/collide_item.h"
+#include "Game/collision/collide_room.h"
 #include "Game/collision/floordata.h"
 #include "Game/collision/Point.h"
+#include "Game/effects/Bubble.h"
+#include "Game/effects/effects.h"
+#include "Game/effects/Splash.h"
 #include "Game/Lara/lara.h"
 #include "Game/Lara/lara_helpers.h"
 #include "Game/setup.h"
+#include "Math/Random.h"
 #include "Objects/Generic/Object/BridgeObject.h"
 #include "Specific/clock.h"
 #include "Specific/level.h"
@@ -14,7 +19,10 @@
 
 using namespace TEN::Collision::Floordata;
 using namespace TEN::Collision::Point;
+using namespace TEN::Effects::Bubble;
+using namespace TEN::Effects::Splash;
 using namespace TEN::Entities::Generic;
+using namespace TEN::Math::Random;
 using namespace TEN::Utils;
 
 // NOTES:
@@ -23,8 +31,8 @@ using namespace TEN::Utils;
 
 namespace TEN::Entities::Traps
 {
-	constexpr auto CRUMBLING_PLATFORM_VELOCITY_MAX	 = 100.0f;
-	constexpr auto CRUMBLING_PLATFORM_VELOCITY_MIN	 = 10.0f;
+	constexpr auto CRUMBLING_PLATFORM_VELOCITY_MAX = 100.0f;
+	constexpr auto CRUMBLING_PLATFORM_VELOCITY_MIN = 10.0f;
 	constexpr auto CRUMBLING_PLATFORM_VELOCITY_ACCEL = 4.0f;
 
 	constexpr auto CRUMBLING_PLATFORM_DELAY = 1.2f;
@@ -160,7 +168,7 @@ namespace TEN::Entities::Traps
 			// Get point collision.
 			auto box = GameBoundingBox(&item);
 			auto pointColl = GetPointCollision(item);
-			int relFloorHeight = (item.Pose.Position.y - pointColl.GetFloorHeight()) - box.Y1 ;
+			int relFloorHeight = (item.Pose.Position.y - pointColl.GetFloorHeight()) - box.Y1;
 
 			// Airborne.
 			if (relFloorHeight <= fallVel)
@@ -181,7 +189,36 @@ namespace TEN::Entities::Traps
 			// Update room number.
 			int probedRoomNumber = pointColl.GetRoomNumber();
 			if (item.RoomNumber != probedRoomNumber)
+			{
+				// Spawn 6 splashes at random positions across platform when entering water.
+				if (TestEnvironment(RoomEnvFlags::ENV_FLAG_WATER, probedRoomNumber) &&
+					!TestEnvironment(RoomEnvFlags::ENV_FLAG_WATER, item.RoomNumber))
+				{
+					int waterHeight = GetPointCollision(item.Pose.Position, probedRoomNumber).GetWaterTopHeight();
+
+					for (int i = 0; i < 6; i++)
+					{
+						SplashSetup.Position = Vector3(
+							item.Pose.Position.x + GenerateFloat((float)box.X1, (float)box.X2),
+							waterHeight - 1,
+							item.Pose.Position.z + GenerateFloat((float)box.Z1, (float)box.Z2));
+						SplashSetup.SplashPower = GenerateFloat(fallVel * 0.5f, fallVel * 2.0f);
+						SplashSetup.InnerRadius = GenerateFloat(48, 128);
+						SetupSplash(&SplashSetup, probedRoomNumber);
+					}
+				}
+
 				ItemNewRoom(itemNumber, probedRoomNumber);
+			}
+
+			// Spawn bubbles every frame while sinking underwater.
+			if (TestEnvironment(RoomEnvFlags::ENV_FLAG_WATER, item.RoomNumber))
+			{
+				for (int i = 0; i < 6; i++)
+					SpawnBubble(
+						GeneratePointInBox(box.ToBoundingOrientedBox(item.Pose)),
+						item.RoomNumber, GenerateInt(32, 256), GenerateInt(BLOCK(0.1f), BLOCK(0.25f)));
+			}
 		}
 
 		break;
@@ -191,6 +228,26 @@ namespace TEN::Entities::Traps
 			// Align to surface.
 			auto radius = Vector2(Objects[item.ObjectNumber].radius);
 			AlignEntityToSurface(&item, radius);
+
+			// Burn on death floor (skip water material sectors).
+			auto pointColl = GetPointCollision(item);
+			auto& sector = pointColl.GetBottomSector();
+			if (sector.Flags.Death)
+			{
+				auto material = sector.GetSurfaceMaterial(item.Pose.Position.x, item.Pose.Position.z, true);
+				if (material != MaterialType::Water)
+				{
+					auto box = GameBoundingBox(&item);
+					for (int i = 0; i < 6; i++)
+					{
+						TriggerFireFlame(
+							item.Pose.Position.x + GenerateInt(box.X1, box.X2),
+							item.Pose.Position.y,
+							item.Pose.Position.z + GenerateInt(box.Z1, box.Z2),
+							FlameType::Medium);
+					}
+				}
+			}
 
 			// Deactivate.
 			if (TestLastFrame(*&item))
