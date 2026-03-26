@@ -1,6 +1,7 @@
 #include "framework.h"
 #include "Objects/Generic/Traps/CrumblingPlatform.h"
 
+#include "Game/Animation/Animation.h"
 #include "Game/collision/collide_item.h"
 #include "Game/collision/collide_room.h"
 #include "Game/collision/floordata.h"
@@ -13,6 +14,7 @@
 #include "Game/setup.h"
 #include "Math/Random.h"
 #include "Objects/Generic/Object/BridgeObject.h"
+#include "Renderer/Renderer.h"
 #include "Specific/clock.h"
 #include "Specific/level.h"
 #include "Specific/trutils.h"
@@ -23,6 +25,7 @@ using namespace TEN::Effects::Bubble;
 using namespace TEN::Effects::Splash;
 using namespace TEN::Entities::Generic;
 using namespace TEN::Math::Random;
+using namespace TEN::Renderer;
 using namespace TEN::Utils;
 
 // NOTES:
@@ -190,20 +193,21 @@ namespace TEN::Entities::Traps
 			int probedRoomNumber = pointColl.GetRoomNumber();
 			if (item.RoomNumber != probedRoomNumber)
 			{
-				// Spawn 6 splashes at random positions across platform when entering water.
+				// Spawn splash for each bone of the platform when entering water.
 				if (TestEnvironment(RoomEnvFlags::ENV_FLAG_WATER, probedRoomNumber) &&
 					!TestEnvironment(RoomEnvFlags::ENV_FLAG_WATER, item.RoomNumber))
 				{
 					int waterHeight = GetPointCollision(item.Pose.Position, probedRoomNumber).GetWaterTopHeight();
 
-					for (int i = 0; i < 6; i++)
+					// Force-update bone matrices for this logic frame so sphere positions are current.
+					g_Renderer.UpdateItemAnimations(itemNumber, true);
+					auto spheres = item.GetSpheres();
+
+					for (const auto& sphere : spheres)
 					{
-						SplashSetup.Position = Vector3(
-							item.Pose.Position.x + GenerateFloat((float)box.X1, (float)box.X2),
-							waterHeight - 1,
-							item.Pose.Position.z + GenerateFloat((float)box.Z1, (float)box.Z2));
+						SplashSetup.Position = Vector3(sphere.Center.x, (float)(waterHeight - 1), sphere.Center.z);
 						SplashSetup.SplashPower = GenerateFloat(fallVel * 0.5f, fallVel * 2.0f);
-						SplashSetup.InnerRadius = GenerateFloat(48, 128);
+						SplashSetup.InnerRadius = sphere.Radius;
 						SetupSplash(&SplashSetup, probedRoomNumber);
 					}
 				}
@@ -214,7 +218,8 @@ namespace TEN::Entities::Traps
 			// Spawn bubbles every frame while sinking underwater.
 			if (TestEnvironment(RoomEnvFlags::ENV_FLAG_WATER, item.RoomNumber))
 			{
-				for (int i = 0; i < 6; i++)
+				constexpr auto bubbleCount = 6;
+				for (int i = 0; i < bubbleCount; i++)
 					SpawnBubble(
 						GeneratePointInBox(box.ToBoundingOrientedBox(item.Pose)),
 						item.RoomNumber, GenerateInt(32, 256), GenerateInt(BLOCK(0.1f), BLOCK(0.25f)));
@@ -238,7 +243,8 @@ namespace TEN::Entities::Traps
 				if (material != MaterialType::Water)
 				{
 					auto box = GameBoundingBox(&item);
-					for (int i = 0; i < 6; i++)
+					constexpr auto flameCount = 6;
+					for (int i = 0; i < flameCount; i++)
 					{
 						TriggerFireFlame(
 							item.Pose.Position.x + GenerateInt(box.X1, box.X2),
