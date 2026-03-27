@@ -122,6 +122,10 @@ namespace TEN::Scripting
 		// @tfield[opt=false] bool ledgeJumps If this setting is enabled, player will be able to jump upwards while hanging on the ledge.
 		"ledgeJumps", &AnimSettings::LedgeJumps,
 
+		/// Spasm effect.
+		// @tfield[opt=true] bool spasmEffect If enabled, player will react with a hit spasm animation when colliding with enemies.
+		"spasmEffect", &AnimSettings::SpasmEffect,
+
 		/// Pose timeout.
 		// @tfield[opt=20] int poseTimeout If this setting is larger than 0, idle standing pose animation will be performed after given timeout (in seconds).
 		"poseTimeout", &AnimSettings::PoseTimeout);
