@@ -432,7 +432,7 @@ void LaraAboveWater(ItemInfo* item, CollisionInfo* coll)
 	coll->Setup.BlockDeathFloorDown = false;
 	coll->Setup.BlockMonkeySwingEdge = false;
 	coll->Setup.EnableObjectPush = true;
-	coll->Setup.EnableSpasm = true;
+	coll->Setup.EnableSpasm = g_GameFlow->GetSettings()->Animations.SpasmEffect;
 	coll->Setup.ForceSolidStatics = false;
 	coll->Setup.PrevPosition = item->Pose.Position;
 	coll->Setup.PrevAnimObjectID = item->Animation.AnimObjectID;
