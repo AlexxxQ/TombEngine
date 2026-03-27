@@ -10,6 +10,7 @@ local settings = Flow.Settings.new()
 	settings.Animations.sprintJump = false
 	settings.Animations.ledgeJumps = false
 	settings.Animations.poseTimeout = 0
+	settings.Animations.spasmEffect = true
 	
 	settings.Camera.binocularLightColor = Color(192, 192, 96)
 	settings.Camera.lasersightLightColor = Color(255, 0, 0)
