@@ -24,6 +24,7 @@ namespace TEN::Scripting
 		bool CrouchRoll		= true;	 // Crouch roll.
 		bool OverhangClimb	= false; // Overhang functionality.
 		bool LedgeJumps		= false; // Jump up or back from a ledge.
+		bool SpasmEffect	= true;	 // Hit spasm effect.
 
 		static void Register(sol::table& parent);
 	};
