@@ -1086,9 +1086,15 @@ bool CreaturePathfind(ItemInfo* item, Vector3i prevPos, short angle, short tilt)
 		floor = GetFloor(item->Pose.Position.x, item->Pose.Position.y, item->Pose.Position.z, &roomNumber);
 		item->Floor = GetFloorHeight(floor, item->Pose.Position.x, item->Pose.Position.y, item->Pose.Position.z);
 
-		// Snap to floor or smoothly descend.
+		// Snap to floor, smoothly ascend steps, or smoothly descend.
 		if (item->Pose.Position.y > item->Floor)
-			item->Pose.Position.y = item->Floor;
+		{
+			int heightDiff = item->Pose.Position.y - item->Floor;
+			if (heightDiff > CLICK(0.25f) && heightDiff <= LOT->Step)
+				item->Pose.Position.y -= CLICK(0.25f); // Smooth step-up ascent.
+			else
+				item->Pose.Position.y = item->Floor;
+		}
 		else if (item->Floor - item->Pose.Position.y > CLICK(0.25f))
 			item->Pose.Position.y += CLICK(0.25f);
 		else if (item->Pose.Position.y < item->Floor)
