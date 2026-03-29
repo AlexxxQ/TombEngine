@@ -267,7 +267,7 @@ namespace TEN::Entities::Creatures::TR1
 				creature->Flags = 0;
 			}
 
-			CreatureVault(itemNumber, angle, 2, 0);
+			CreatureVault(itemNumber, angle, 2, BLOCK(0.25f));
 		}
 	}
 }
