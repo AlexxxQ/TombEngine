@@ -1,6 +1,7 @@
 #include "framework.h"
 #include "Objects/TR1/Entity/tr1_big_rat.h"
 
+#include "Game/Animation/Animation.h"
 #include "Game/collision/collide_room.h"
 #include "Game/collision/Point.h"
 #include "Game/control/box.h"
@@ -244,7 +245,10 @@ namespace TEN::Entities::Creatures::TR1
 			creature->Flags = 1;
 			CreatureAnimation(itemNumber, angle, 0);
 			CreatureUnderwater(item, 0);
-			item->Pose.Position.y = GetPointCollision(*item).GetWaterTopHeight() - BIG_RAT_WATER_SURFACE_OFFSET;
+			
+			int waterTop = GetPointCollision(*item).GetWaterTopHeight();
+			if (waterTop != NO_HEIGHT)
+				item->Pose.Position.y = waterTop - BIG_RAT_WATER_SURFACE_OFFSET;
 
 			if (item->Animation.ActiveState == BIG_RAT_STATE_SWIM ||
 				item->Animation.ActiveState == BIG_RAT_STATE_SWIM_BITE_ATTACK)
@@ -263,11 +267,15 @@ namespace TEN::Entities::Creatures::TR1
 		{
 			if (creature->Flags)
 			{
-				item->Pose.Position.y = item->Floor;
+				// Snap Y to land floor before CreatureVault so pathfinding
+				// doesn't reject the position due to ceiling checks.
+				auto pointColl = GetPointCollision(*item);
+				item->Pose.Position.y = pointColl.GetFloorHeight();
+				item->Floor = item->Pose.Position.y;
 				creature->Flags = 0;
 			}
 
-			CreatureVault(itemNumber, angle, 2, BLOCK(0.25f));
+			CreatureVault(itemNumber, angle, 2, 0);
 		}
 	}
 }
