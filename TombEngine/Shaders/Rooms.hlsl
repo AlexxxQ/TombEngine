@@ -72,8 +72,9 @@ PixelShaderInput VS(VertexShaderInput input)
 		float dist = length(pos - CamPositionWS.xyz);
 		// Depth below camera as proxy for depth below water surface (Y-down: pos.y grows downward).
 		// smoothstep: 0 = surface (no wobble), 3072 = 3 sectors deep (full wobble).
+		// If camera is underwater, non-water room above is fully distorted.
 		float depth = max(0.0f, pos.y - CamPositionWS.y);
-		float attenuation = smoothstep(0.0f, 3072.0f, depth);
+		float attenuation = CameraUnderwater ? 1.0f : smoothstep(0.0f, 3072.0f, depth);
 		float factor = InterpolatedFrame + (pos.x + pos.z) * 0.2f;
 		float xOffset = (sin(factor * PI / 20.0f)) * (dist / 1024) * 3 * attenuation;
 		float yOffset = (cos(factor * PI / 20.0f)) * (dist / 1024) * 3 * attenuation;
