@@ -51,18 +51,32 @@ PixelShaderInput VS(VertexShaderInput input)
 
 	// Calculate vertex effects
 	float wibble = Wibble(input.Effects, DecodeHash(input.AnimationFrameOffsetIndexHash));
-	float3 pos = Move(input.Position, input.Effects * weight, wibble);
+
+	// Water depth-based movement: surface = 0, 3 sectors deep = max.
+	// TombEngine is Y-down: pos.y increases with depth. Camera above water has smaller Y.
+	float depthFactor = 1.0f;
+	if (Water)
+	{
+		float depth = max(0.0f, input.Position.y - CamPositionWS.y);
+		depthFactor = saturate(depth / 3072.0f);
+	}
+
+	float3 pos = Move(input.Position, input.Effects * weight, wibble * depthFactor);
 	float3 col = Glow(input.Color.xyz, input.Effects, wibble);
 
 	// Refraction
 	float4 screenPos = mul(float4(pos, 1.0f), ViewProjection);
-	float2 clipPos = screenPos.xy / screenPos.w;
 
 	if (CameraUnderwater != Water)
 	{
-		float factor = (Frame + clipPos.x * 320);
-		float xOffset = (sin(factor * PI / 20.0f)) * (screenPos.z / 1024) * 4;
-		float yOffset = (cos(factor * PI / 20.0f)) * (screenPos.z / 1024) * 4;
+		float dist = length(pos - CamPositionWS.xyz);
+		// Depth below camera as proxy for depth below water surface (Y-down: pos.y grows downward).
+		// smoothstep: 0 = surface (no wobble), 3072 = 3 sectors deep (full wobble).
+		float depth = max(0.0f, pos.y - CamPositionWS.y);
+		float attenuation = smoothstep(0.0f, 3072.0f, depth);
+		float factor = InterpolatedFrame + (pos.x + pos.z) * 0.2f;
+		float xOffset = (sin(factor * PI / 20.0f)) * (dist / 1024) * 3 * attenuation;
+		float yOffset = (cos(factor * PI / 20.0f)) * (dist / 1024) * 3 * attenuation;
 		screenPos.x += xOffset * weight;
 		screenPos.y += yOffset * weight;
 	}
