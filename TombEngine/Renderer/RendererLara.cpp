@@ -8,6 +8,7 @@
 #include "Game/Lara/lara_fire.h"
 #include "Game/Lara/lara_tests.h"
 #include "Game/control/control.h"
+#include "Game/collision/Point.h"
 #include "Game/spotcam.h"
 #include "Game/camera.h"
 #include "Game/collision/Sphere.h"
@@ -21,6 +22,7 @@ using namespace TEN::Animation;
 using namespace TEN::Effects::Hair;
 using namespace TEN::Math;
 using namespace TEN::Renderer;
+using namespace TEN::Collision::Point;
 
 extern ScriptInterfaceFlowHandler *g_GameFlow;
 
@@ -337,7 +339,18 @@ void Renderer::DrawLara(RenderView& view, RendererPass rendererPass)
 	_stItem.Color = item->Color;
 	_stItem.AmbientLight = item->AmbientLight;
 	_stItem.Skinned = (int)skinMode;
-	_stItem.InWaterRoom = int(g_Configuration.EnableCaustics && (g_Level.Rooms[item->RoomNumber].flags & ENV_FLAG_WATER) && !(g_Level.Rooms[item->RoomNumber].flags & ENV_FLAG_NOCAUSTICS));
+	{
+		const auto& nativeRoom = g_Level.Rooms[item->RoomNumber];
+		if (g_Configuration.EnableCaustics && (nativeRoom.flags & ENV_FLAG_WATER) && !(nativeRoom.flags & ENV_FLAG_NOCAUSTICS))
+		{
+			int waterHeight = GetPointCollision(nativeItem->Pose.Position, nativeItem->RoomNumber).GetWaterSurfaceHeight();
+			_stItem.WaterSurfaceHeight = (waterHeight != NO_HEIGHT) ? (float)waterHeight : ITEM_NO_WATER_SURFACE;
+		}
+		else
+		{
+			_stItem.WaterSurfaceHeight = ITEM_NO_WATER_SURFACE;
+		}
+	}
 
 	for (int k = 0; k < item->MeshIndex.size(); k++)
 		_stItem.BoneLightModes[k] = (int)GetMesh(item->MeshIndex[k])->LightMode;
@@ -398,7 +411,19 @@ void Renderer::DrawLaraHair(RendererItem* itemToDraw, RendererRoom* room, Render
 		_stItem.World = Matrix::Identity;
 		_stItem.BonesMatrices[0] = itemToDraw->InterpolatedAnimTransforms[HairUnit::GetRootMeshID(i)] * itemToDraw->InterpolatedWorld;
 		_stItem.Skinned = (int)skinned;
-		_stItem.InWaterRoom = int(g_Configuration.EnableCaustics && (g_Level.Rooms[itemToDraw->RoomNumber].flags & ENV_FLAG_WATER) && !(g_Level.Rooms[itemToDraw->RoomNumber].flags & ENV_FLAG_NOCAUSTICS));
+		{
+			const auto& nativeRoom = g_Level.Rooms[itemToDraw->RoomNumber];
+			if (g_Configuration.EnableCaustics && (nativeRoom.flags & ENV_FLAG_WATER) && !(nativeRoom.flags & ENV_FLAG_NOCAUSTICS))
+			{
+				const auto& nativeItem = g_Level.Items[itemToDraw->ItemNumber];
+				int waterHeight = GetPointCollision(nativeItem.Pose.Position, nativeItem.RoomNumber).GetWaterSurfaceHeight();
+				_stItem.WaterSurfaceHeight = (waterHeight != NO_HEIGHT) ? (float)waterHeight : ITEM_NO_WATER_SURFACE;
+			}
+			else
+			{
+				_stItem.WaterSurfaceHeight = ITEM_NO_WATER_SURFACE;
+			}
+		}
 
 		ReflectMatrixOptionally(_stItem.BonesMatrices[0]);
 
