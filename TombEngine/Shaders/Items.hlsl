@@ -134,9 +134,15 @@ PixelShaderOutput PS(PixelShaderInput input)
 	color = lerp(color, shadow, shadowable);
 
 	// Caustics (when item is in a water room)
-	if (Caustics || InWaterRoom)
+	bool itemInWater = (WaterSurfaceHeight < ITEM_NO_WATER_SURFACE);
+	if (Caustics || itemInWater)
 	{
-		float causticsAtten = saturate(dot(float3(0.0f, -1.0f, 0.0f), normal));
+		// Per-pixel depth fade: full caustics below water surface, fade out above.
+		// Y-down: WorldPosition.y >= WaterSurfaceHeight means underwater.
+		float depthBelowSurface = input.WorldPosition.y - WaterSurfaceHeight;
+		float waterMask = itemInWater ? saturate(depthBelowSurface / 64.0f) : 1.0f;
+
+		float causticsAtten = saturate(dot(float3(0.0f, -1.0f, 0.0f), normal)) * waterMask;
 
 		float3 blending = abs(normal);
 		blending = normalize(max(blending, 0.00001f));
