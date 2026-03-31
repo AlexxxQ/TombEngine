@@ -337,6 +337,7 @@ void Renderer::DrawLara(RenderView& view, RendererPass rendererPass)
 	_stItem.Color = item->Color;
 	_stItem.AmbientLight = item->AmbientLight;
 	_stItem.Skinned = (int)skinMode;
+	_stItem.InWaterRoom = int(g_Configuration.EnableCaustics && (g_Level.Rooms[item->RoomNumber].flags & ENV_FLAG_WATER) && !(g_Level.Rooms[item->RoomNumber].flags & ENV_FLAG_NOCAUSTICS));
 
 	for (int k = 0; k < item->MeshIndex.size(); k++)
 		_stItem.BoneLightModes[k] = (int)GetMesh(item->MeshIndex[k])->LightMode;
@@ -397,6 +398,7 @@ void Renderer::DrawLaraHair(RendererItem* itemToDraw, RendererRoom* room, Render
 		_stItem.World = Matrix::Identity;
 		_stItem.BonesMatrices[0] = itemToDraw->InterpolatedAnimTransforms[HairUnit::GetRootMeshID(i)] * itemToDraw->InterpolatedWorld;
 		_stItem.Skinned = (int)skinned;
+		_stItem.InWaterRoom = int(g_Configuration.EnableCaustics && (g_Level.Rooms[itemToDraw->RoomNumber].flags & ENV_FLAG_WATER) && !(g_Level.Rooms[itemToDraw->RoomNumber].flags & ENV_FLAG_NOCAUSTICS));
 
 		ReflectMatrixOptionally(_stItem.BonesMatrices[0]);
 
