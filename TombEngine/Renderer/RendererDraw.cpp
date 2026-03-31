@@ -9,6 +9,7 @@
 #include "Game/Animation/Animation.h"
 #include "Game/camera.h"
 #include "Game/control/control.h"
+#include "Game/collision/Point.h"
 #include "Game/control/volume.h"
 #include "Game/effects/DisplaySprite.h"
 #include "Game/effects/Hair.h"
@@ -41,6 +42,7 @@ using namespace TEN::Effects::DisplaySprite;
 using namespace TEN::Entities::Creatures::TR3;
 using namespace TEN::Entities::Generic;
 using namespace TEN::Renderer::Structures;
+using namespace TEN::Collision::Point;
 
 extern GUNSHELL_STRUCT Gunshells[MAX_GUNSHELL];
 
@@ -2550,7 +2552,18 @@ namespace TEN::Renderer
 			_stItem.Color = item->Color;
 			_stItem.AmbientLight = item->AmbientLight;
 			_stItem.Skinned = (int)skinMode;
-			_stItem.InWaterRoom = int(g_Configuration.EnableCaustics && (g_Level.Rooms[item->RoomNumber].flags & ENV_FLAG_WATER) && !(g_Level.Rooms[item->RoomNumber].flags & ENV_FLAG_NOCAUSTICS));
+			{
+				const auto& nativeRoom = g_Level.Rooms[item->RoomNumber];
+				if (g_Configuration.EnableCaustics && (nativeRoom.flags & ENV_FLAG_WATER) && !(nativeRoom.flags & ENV_FLAG_NOCAUSTICS))
+				{
+					int waterHeight = GetPointCollision(nativeItem->Pose.Position, nativeItem->RoomNumber).GetWaterSurfaceHeight();
+					_stItem.WaterSurfaceHeight = (waterHeight != NO_HEIGHT) ? (float)waterHeight : ITEM_NO_WATER_SURFACE;
+				}
+				else
+				{
+					_stItem.WaterSurfaceHeight = ITEM_NO_WATER_SURFACE;
+				}
+			}
 
 			for (int k = 0; k < item->MeshIndex.size(); k++)
 				_stItem.BoneLightModes[k] = (int)GetMesh(item->MeshIndex[k])->LightMode;
@@ -3856,7 +3869,19 @@ namespace TEN::Renderer
 		_stItem.Color = objectInfo->Item->Color;
 		_stItem.AmbientLight = objectInfo->Item->AmbientLight;
 		_stItem.Skinned = (int)(objectInfo->Skinned ? SkinningMode::Full : SkinningMode::None);
-		_stItem.InWaterRoom = int(g_Configuration.EnableCaustics && (g_Level.Rooms[objectInfo->Item->RoomNumber].flags & ENV_FLAG_WATER) && !(g_Level.Rooms[objectInfo->Item->RoomNumber].flags & ENV_FLAG_NOCAUSTICS));
+		{
+			const auto& nativeRoom = g_Level.Rooms[objectInfo->Item->RoomNumber];
+			if (g_Configuration.EnableCaustics && (nativeRoom.flags & ENV_FLAG_WATER) && !(nativeRoom.flags & ENV_FLAG_NOCAUSTICS))
+			{
+				const auto& nativeItem = g_Level.Items[objectInfo->Item->ItemNumber];
+				int waterHeight = GetPointCollision(nativeItem.Pose.Position, nativeItem.RoomNumber).GetWaterSurfaceHeight();
+				_stItem.WaterSurfaceHeight = (waterHeight != NO_HEIGHT) ? (float)waterHeight : ITEM_NO_WATER_SURFACE;
+			}
+			else
+			{
+				_stItem.WaterSurfaceHeight = ITEM_NO_WATER_SURFACE;
+			}
+		}
 
 		const auto& moveableObj = *_moveableObjects[objectInfo->Item->ObjectID];
 
@@ -4002,7 +4027,19 @@ namespace TEN::Renderer
 		_stItem.Color = objectInfo->Item->Color;
 		_stItem.AmbientLight = objectInfo->Item->AmbientLight;
 		_stItem.Skinned = (int)(objectInfo->Skinned ? SkinningMode::Full : SkinningMode::None);
-		_stItem.InWaterRoom = int(g_Configuration.EnableCaustics && (g_Level.Rooms[objectInfo->Item->RoomNumber].flags & ENV_FLAG_WATER) && !(g_Level.Rooms[objectInfo->Item->RoomNumber].flags & ENV_FLAG_NOCAUSTICS));
+		{
+			const auto& nativeRoom = g_Level.Rooms[objectInfo->Item->RoomNumber];
+			if (g_Configuration.EnableCaustics && (nativeRoom.flags & ENV_FLAG_WATER) && !(nativeRoom.flags & ENV_FLAG_NOCAUSTICS))
+			{
+				const auto& nativeItem = g_Level.Items[objectInfo->Item->ItemNumber];
+				int waterHeight = GetPointCollision(nativeItem.Pose.Position, nativeItem.RoomNumber).GetWaterSurfaceHeight();
+				_stItem.WaterSurfaceHeight = (waterHeight != NO_HEIGHT) ? (float)waterHeight : ITEM_NO_WATER_SURFACE;
+			}
+			else
+			{
+				_stItem.WaterSurfaceHeight = ITEM_NO_WATER_SURFACE;
+			}
+		}
 
 		const auto& moveableObj = *_moveableObjects[(int)GAME_OBJECT_ID::ID_HAIR_PRIMARY + index];
 
