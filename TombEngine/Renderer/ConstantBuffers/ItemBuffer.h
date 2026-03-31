@@ -7,6 +7,8 @@ namespace TEN::Renderer::ConstantBuffers
 {
 	using namespace DirectX::SimpleMath;
 
+	constexpr auto ITEM_NO_WATER_SURFACE = 100000.0f;
+
 	struct alignas(16) CItemBuffer
 	{
 		Matrix World;
@@ -23,7 +25,7 @@ namespace TEN::Renderer::ConstantBuffers
 		//--
 		int NumLights;
 		int Skinned;
-		int InWaterRoom;
+		float WaterSurfaceHeight;
 		int CBItemPad0;
 	};
 }
