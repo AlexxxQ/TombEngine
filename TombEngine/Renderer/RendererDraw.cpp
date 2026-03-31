@@ -2550,6 +2550,7 @@ namespace TEN::Renderer
 			_stItem.Color = item->Color;
 			_stItem.AmbientLight = item->AmbientLight;
 			_stItem.Skinned = (int)skinMode;
+			_stItem.InWaterRoom = int(g_Configuration.EnableCaustics && (g_Level.Rooms[item->RoomNumber].flags & ENV_FLAG_WATER) && !(g_Level.Rooms[item->RoomNumber].flags & ENV_FLAG_NOCAUSTICS));
 
 			for (int k = 0; k < item->MeshIndex.size(); k++)
 				_stItem.BoneLightModes[k] = (int)GetMesh(item->MeshIndex[k])->LightMode;
@@ -3855,6 +3856,7 @@ namespace TEN::Renderer
 		_stItem.Color = objectInfo->Item->Color;
 		_stItem.AmbientLight = objectInfo->Item->AmbientLight;
 		_stItem.Skinned = (int)(objectInfo->Skinned ? SkinningMode::Full : SkinningMode::None);
+		_stItem.InWaterRoom = int(g_Configuration.EnableCaustics && (g_Level.Rooms[objectInfo->Item->RoomNumber].flags & ENV_FLAG_WATER) && !(g_Level.Rooms[objectInfo->Item->RoomNumber].flags & ENV_FLAG_NOCAUSTICS));
 
 		const auto& moveableObj = *_moveableObjects[objectInfo->Item->ObjectID];
 
@@ -4000,6 +4002,7 @@ namespace TEN::Renderer
 		_stItem.Color = objectInfo->Item->Color;
 		_stItem.AmbientLight = objectInfo->Item->AmbientLight;
 		_stItem.Skinned = (int)(objectInfo->Skinned ? SkinningMode::Full : SkinningMode::None);
+		_stItem.InWaterRoom = int(g_Configuration.EnableCaustics && (g_Level.Rooms[objectInfo->Item->RoomNumber].flags & ENV_FLAG_WATER) && !(g_Level.Rooms[objectInfo->Item->RoomNumber].flags & ENV_FLAG_NOCAUSTICS));
 
 		const auto& moveableObj = *_moveableObjects[(int)GAME_OBJECT_ID::ID_HAIR_PRIMARY + index];
 
