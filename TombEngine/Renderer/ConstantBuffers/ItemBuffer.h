@@ -23,5 +23,7 @@ namespace TEN::Renderer::ConstantBuffers
 		//--
 		int NumLights;
 		int Skinned;
+		int InWaterRoom;
+		int CBItemPad0;
 	};
 }
