@@ -451,18 +451,16 @@ namespace TEN::Renderer
 			sd.BufferDesc.RefreshRate.Numerator = _refreshRate;
 			sd.BufferDesc.RefreshRate.Denominator = 1;
 		}
-		sd.BufferDesc.RefreshRate.Numerator = 60;
-		sd.BufferDesc.RefreshRate.Denominator = 1;
 		sd.BufferDesc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
 		sd.BufferDesc.ScanlineOrdering = DXGI_MODE_SCANLINE_ORDER_UNSPECIFIED;
 		sd.BufferDesc.Scaling = DXGI_MODE_SCALING_STRETCHED;
 		sd.Windowed = true;
-		sd.SwapEffect = DXGI_SWAP_EFFECT_DISCARD;
+		sd.SwapEffect = DXGI_SWAP_EFFECT_FLIP_DISCARD;
 		sd.Flags = 0;
 		sd.OutputWindow = handle;
 		sd.SampleDesc.Count = 1;
 		sd.SampleDesc.Quality = 0;
-		sd.BufferCount = 1;
+		sd.BufferCount = 2;
 		sd.BufferUsage = DXGI_USAGE_RENDER_TARGET_OUTPUT;
 		ComPtr<IDXGIDevice> dxgiDevice;
 		Utils::throwIfFailed(_device.As(&dxgiDevice));
@@ -474,6 +472,13 @@ namespace TEN::Renderer
 		Utils::throwIfFailed(dxgiAdapter->GetParent(__uuidof(IDXGIFactory), &dxgiFactory));
 
 		Utils::throwIfFailed(dxgiFactory->CreateSwapChain(_device.Get(), &sd, &_swapChain));
+
+		// Set maximum frame latency to 1 for consistent frame pacing.
+		ComPtr<IDXGIDevice1> dxgiDevice1;
+		if (SUCCEEDED(_device.As(&dxgiDevice1)))
+		{
+			dxgiDevice1->SetMaximumFrameLatency(1);
+		}
 
 		dxgiFactory->MakeWindowAssociation(handle, DXGI_MWA_NO_ALT_ENTER);
  
