@@ -18,7 +18,9 @@ cbuffer CBItem : register(b1)
     ShaderLight ItemLights[MAX_LIGHTS_PER_ITEM];
 	//--
 	int NumItemLights;
-    int Skinned;
+	int Skinned;
+	int InWaterRoom;
+	int CBItemPad0;
 };
 
 #endif // CBITEMSHADER
