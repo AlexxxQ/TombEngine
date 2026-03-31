@@ -3,7 +3,9 @@
 
 #include "./ShaderLight.hlsli"
 
-cbuffer CBItem : register(b1) 
+static const float ITEM_NO_WATER_SURFACE = 100000.0f;
+
+cbuffer CBItem : register(b1)
 {
 	float4x4 World;
 	//--
@@ -19,7 +21,7 @@ cbuffer CBItem : register(b1)
 	//--
 	int NumItemLights;
 	int Skinned;
-	int InWaterRoom;
+	float WaterSurfaceHeight;
 	int CBItemPad0;
 };
 
