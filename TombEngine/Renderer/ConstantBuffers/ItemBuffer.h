@@ -23,5 +23,7 @@ namespace TEN::Renderer::ConstantBuffers
 		//--
 		int NumLights;
 		int Skinned;
+		unsigned int BoneWaterMask;
+		int ItemPad1;
 	};
 }
