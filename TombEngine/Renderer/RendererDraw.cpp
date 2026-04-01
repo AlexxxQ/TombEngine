@@ -152,39 +152,63 @@ namespace TEN::Renderer
 			_shadowLight->Position :
 			Vector3::Lerp(_shadowLight->PrevPosition, _shadowLight->Position, GetInterpolationFactor());
 
+		if (shadowLightPos == item->Position)
+			return;
+
+		// Setup geometry buffers and shaders once, outside the per-face loop.
+		_shaders.Bind(Shader::ShadowMap);
+
+		unsigned int stride = sizeof(Vertex);
+		unsigned int offset = 0;
+		_context->IASetVertexBuffers(0, 1, _moveablesVertexBuffer.Buffer.GetAddressOf(), &stride, &offset);
+		_context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+		_context->IASetInputLayout(_inputLayout.Get());
+		_context->IASetIndexBuffer(_moveablesIndexBuffer.Buffer.Get(), DXGI_FORMAT_R32_UINT, 0);
+
+		BindTexture(TextureRegister::ColorMap, &std::get<0>(_moveablesTextures[0]), SamplerStateRegister::AnisotropicClamp);
+		BindTexture(TextureRegister::NormalMap, &std::get<1>(_moveablesTextures[0]), SamplerStateRegister::AnisotropicClamp);
+
+		SetAlphaTest(AlphaTestMode::GreatherThan, ALPHA_TEST_THRESHOLD);
+
+		auto& obj = GetRendererObject((GAME_OBJECT_ID)item->ObjectID);
+		auto skinMode = GetSkinningMode(obj, item->SkinIndex);
+
+		// Build item constant buffer once.
+		BindConstantBufferVS(ConstantBufferRegister::Item, _cbItem.get());
+		BindConstantBufferPS(ConstantBufferRegister::Item, _cbItem.get());
+
+		_stItem.World = item->InterpolatedWorld;
+		_stItem.Color = item->Color;
+		_stItem.AmbientLight = item->AmbientLight;
+		_stItem.Skinned = (int)skinMode;
+
+		for (int k = 0; k < MAX_BONES; k++)
+			_stItem.BoneLightModes[k] = (int)LightMode::Static;
+
+		if (skinMode == SkinningMode::Full)
+		{
+			for (int m = 0; m < obj.AnimationTransforms.size(); m++)
+				_stItem.BonesMatrices[m] = obj.BindPoseTransforms[m] * item->InterpolatedAnimTransforms[m];
+		}
+
+		memcpy(_stItem.BonesMatrices, item->InterpolatedAnimTransforms, sizeof(Matrix) * obj.AnimationTransforms.size());
+		UpdateConstantBuffer(_stItem, _cbItem);
+
+		auto projection = Matrix::CreatePerspectiveFieldOfView(90.0f * PI / 180.0f, 1.0f, 16.0f, _shadowLight->Out);
+
 		for (int step = 0; step < 6; step++)
 		{
-			// Bind render target.
+			// Bind render target face.
 			_context->OMSetRenderTargets(1, _shadowMap.RenderTargetView[step].GetAddressOf(),
 				_shadowMap.DepthStencilView[step].Get());
 
 			_context->RSSetViewports(1, &_shadowMapViewport);
 			ResetScissor();
 
-			if (shadowLightPos == item->Position)
-				return;
-
-			unsigned int stride = sizeof(Vertex);
-			unsigned int offset = 0;
-
-			// Set shaders.
-			_shaders.Bind(Shader::ShadowMap);
-
-			_context->IASetVertexBuffers(0, 1, _moveablesVertexBuffer.Buffer.GetAddressOf(), &stride, &offset);
-			_context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
-			_context->IASetInputLayout(_inputLayout.Get());
-			_context->IASetIndexBuffer(_moveablesIndexBuffer.Buffer.Get(), DXGI_FORMAT_R32_UINT, 0);
-
-			// Set texture.
-			BindTexture(TextureRegister::ColorMap, &std::get<0>(_moveablesTextures[0]), SamplerStateRegister::AnisotropicClamp);
-			BindTexture(TextureRegister::NormalMap, &std::get<1>(_moveablesTextures[0]), SamplerStateRegister::AnisotropicClamp);
-
-			// Set camera matrices.
+			// Update per-face camera matrix.
 			auto view = Matrix::CreateLookAt(shadowLightPos, shadowLightPos +
 				RenderTargetCube::forwardVectors[step] * BLOCK(10),
 				RenderTargetCube::upVectors[step]);
-
-			auto projection = Matrix::CreatePerspectiveFieldOfView(90.0f * PI / 180.0f, 1.0f, 16.0f, _shadowLight->Out);
 
 			auto shadowProjection = CCameraMatrixBuffer{};
 			shadowProjection.ViewProjection = view * projection;
@@ -193,28 +217,8 @@ namespace TEN::Renderer
 
 			_stShadowMap.LightViewProjections[step] = (view * projection);
 
-			SetAlphaTest(AlphaTestMode::GreatherThan, ALPHA_TEST_THRESHOLD);
-
-			auto& obj = GetRendererObject((GAME_OBJECT_ID)item->ObjectID);
-			auto skinMode = GetSkinningMode(obj, item->SkinIndex);
-
-			BindConstantBufferVS(ConstantBufferRegister::Item, _cbItem.get());
-			BindConstantBufferPS(ConstantBufferRegister::Item, _cbItem.get());
-
-			_stItem.World = item->InterpolatedWorld;
-			_stItem.Color = item->Color;
-			_stItem.AmbientLight = item->AmbientLight;
-			_stItem.Skinned = (int)skinMode;
-
-			for (int k = 0; k < MAX_BONES; k++)
-				_stItem.BoneLightModes[k] = (int)LightMode::Static;
-
 			if (skinMode == SkinningMode::Full)
 			{
-				for (int m = 0; m < obj.AnimationTransforms.size(); m++)
-					_stItem.BonesMatrices[m] = obj.BindPoseTransforms[m] * item->InterpolatedAnimTransforms[m];
-				UpdateConstantBuffer(_stItem, _cbItem);
-
 				auto* mesh = GetMesh(item->SkinIndex);
 
 				for (auto& bucket : mesh->Buckets)
@@ -225,15 +229,10 @@ namespace TEN::Renderer
 					if (bucket.BlendMode != BlendMode::Opaque && bucket.BlendMode != BlendMode::AlphaTest)
 						continue;
 
-					// Draw vertices.
 					DrawIndexedTriangles(bucket.NumIndices, bucket.StartIndex, 0);
-
 					_numShadowMapDrawCalls++;
 				}
 			}
-
-			memcpy(_stItem.BonesMatrices, item->InterpolatedAnimTransforms, sizeof(Matrix) * obj.AnimationTransforms.size());
-			UpdateConstantBuffer(_stItem, _cbItem);
 
 			for (int k = 0; k < obj.ObjectMeshes.size(); k++)
 			{
@@ -256,9 +255,7 @@ namespace TEN::Renderer
 					if (bucket.BlendMode != BlendMode::Opaque && bucket.BlendMode != BlendMode::AlphaTest)
 						continue;
 
-					// Draw vertices.
 					DrawIndexedTriangles(bucket.NumIndices, bucket.StartIndex, 0);
-
 					_numShadowMapDrawCalls++;
 				}
 			}
