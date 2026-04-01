@@ -3,7 +3,7 @@
 
 #include "./ShaderLight.hlsli"
 
-cbuffer CBItem : register(b1) 
+cbuffer CBItem : register(b1)
 {
 	float4x4 World;
 	//--
@@ -18,7 +18,9 @@ cbuffer CBItem : register(b1)
     ShaderLight ItemLights[MAX_LIGHTS_PER_ITEM];
 	//--
 	int NumItemLights;
-    int Skinned;
+	int Skinned;
+	uint BoneWaterMask;
+	int ItemPad1;
 };
 
 #endif // CBITEMSHADER
