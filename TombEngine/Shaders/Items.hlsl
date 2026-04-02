@@ -1,6 +1,7 @@
 #include "./Math.hlsli"
 #include "./CBCamera.hlsli"
 #include "./CBItem.hlsli"
+#include "./CBRoom.hlsli"
 #include "./ShaderLight.hlsli"
 #include "./VertexEffects.hlsli"
 #include "./VertexInput.hlsli"
@@ -36,6 +37,9 @@ SamplerState Sampler : register(s0);
 
 Texture2D NormalTexture : register(t1);
 SamplerState NormalTextureSampler : register(s1);
+
+Texture2D CausticsTexture : register(t2);
+SamplerState CausticsTextureSampler : register(s2);
 
 Texture2D AmbientMapFrontTexture : register(t7);
 SamplerState AmbientMapFrontSampler : register(s7);
@@ -108,9 +112,16 @@ PixelShaderOutput PS(PixelShaderInput input)
     float occlusion = CalculateOcclusion(GetSamplePosition(input.PositionCopy), tex.w);
     occlusion *= ambientOcclusion;
 
+	// Per-pixel water tint and caustics based on world Y vs water surface.
+	float waterTint = 0.0f;
+	if (WaterHeight < 100000.0f)
+		waterTint = saturate((input.WorldPosition.y - WaterHeight) / 128.0f);
+
+	float3 ambient = lerp(AmbientLight.xyz, WaterAmbientLight.xyz, waterTint);
+
 	float3 color = (BoneLightModes[input.Bone / 4][input.Bone % 4] == 0) ?
 		CombineLights(
-			AmbientLight.xyz,
+			ambient,
 			input.Color.xyz,
 			tex.xyz, 
 			input.WorldPosition,
@@ -128,6 +139,30 @@ PixelShaderOutput PS(PixelShaderInput input)
 	float3 shadow = DoShadow(input.WorldPosition, normal, color, -0.5f);
 	shadow = DoBlobShadows(input.WorldPosition, shadow);
 	color = lerp(color, shadow, shadowable);
+
+	// Caustics (per-pixel, below water surface)
+	if (waterTint > 0.0f)
+	{
+		float causticsAtten = saturate(dot(float3(0.0f, -1.0f, 0.0f), normal));
+
+		float3 blending = abs(normal);
+		blending = normalize(max(blending, 0.00001f));
+		float b = (blending.x + blending.y + blending.z);
+		blending /= float3(b, b, b);
+
+		float3 p = frac(input.WorldPosition.xyz / 2048.0f);
+
+		float2 uv_x = CausticsStartUV + float2(p.z, p.y) * CausticsSize;
+		float2 uv_y = CausticsStartUV + float2(p.z, p.x) * CausticsSize;
+		float2 uv_z = CausticsStartUV + float2(p.y, p.x) * CausticsSize;
+
+		float3 xaxis = CausticsTexture.SampleLevel(CausticsTextureSampler, uv_x, 0).xyz;
+		float3 yaxis = CausticsTexture.SampleLevel(CausticsTextureSampler, uv_y, 0).xyz;
+		float3 zaxis = CausticsTexture.SampleLevel(CausticsTextureSampler, uv_z, 0).xyz;
+
+		float3 caustics = xaxis * blending.x + yaxis * blending.y + zaxis * blending.z;
+		color += caustics * causticsAtten * waterTint * 2.0f;
+	}
 
 	output.Color = saturate(float4(color * occlusion, tex.w));
 	output.Color = DoFogBulbsForPixel(output.Color, float4(input.FogBulbs.xyz, 1.0f));
