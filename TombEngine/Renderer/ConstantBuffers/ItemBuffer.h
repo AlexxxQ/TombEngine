@@ -17,11 +17,15 @@ namespace TEN::Renderer::ConstantBuffers
 		//--
 		Vector4 AmbientLight;
 		//--
+		Vector4 WaterAmbientLight;
+		//--
 		int BoneLightModes[MAX_BONES];
 		//--
 		ShaderLight Lights[MAX_LIGHTS_PER_ITEM];
 		//--
 		int NumLights;
 		int Skinned;
+		float WaterHeight;
+		int ItemPad1;
 	};
 }
