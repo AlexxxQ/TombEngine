@@ -840,9 +840,8 @@ namespace TEN::Renderer
 				{
                  // Fast shallow-water exit: if gameplay already switched to Dry from Wade,
 					// avoid restarting ambient from full water room tint.
-					if (Lara.Control.WaterStatus == WaterStatus::Dry &&
-						item->WaterStatusInitialized &&
-						item->CachedWaterStatus == WaterStatus::Wade)
+                    if ((item->WaterStatusInitialized && item->CachedWaterStatus == WaterStatus::Wade) ||
+						(!item->WaterStatusInitialized && Lara.Control.WaterStatus == WaterStatus::Wade))
 					{
 						skipInterpolation = true;
 					}
