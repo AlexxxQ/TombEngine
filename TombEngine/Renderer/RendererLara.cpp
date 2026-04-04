@@ -341,22 +341,7 @@ void Renderer::DrawLara(RenderView& view, RendererPass rendererPass)
 	_stItem.WaterAmbientLight = item->AmbientLight;
 	_stItem.WaterHeight = FLT_MAX;
 	_stItem.Skinned = (int)skinMode;
-	if (g_Configuration.EnableCaustics)
-	{
-		int waterHeight = GetPointCollision(nativeItem->Pose.Position, nativeItem->RoomNumber).GetWaterSurfaceHeight();
-		if (waterHeight != NO_HEIGHT && !(g_Level.Rooms[nativeItem->RoomNumber].flags & ENV_FLAG_NOCAUSTICS))
-		{
-			_stItem.WaterHeight = (float)waterHeight;
-
-			auto waterPos = Vector3i(nativeItem->Pose.Position.x, waterHeight + 1, nativeItem->Pose.Position.z);
-			int waterRoomNumber = GetPointCollision(waterPos, nativeItem->RoomNumber).GetRoomNumber();
-			_stItem.WaterAmbientLight = _rooms[waterRoomNumber].AmbientLight;
-
-			auto airPos = Vector3i(nativeItem->Pose.Position.x, waterHeight - 1, nativeItem->Pose.Position.z);
-			int airRoomNumber = GetPointCollision(airPos, nativeItem->RoomNumber).GetRoomNumber();
-			_stItem.AmbientLight = _rooms[airRoomNumber].AmbientLight;
-		}
-	}
+	UpdateItemWaterCache(*item, *nativeItem);
 
 	for (int k = 0; k < item->MeshIndex.size(); k++)
 		_stItem.BoneLightModes[k] = (int)GetMesh(item->MeshIndex[k])->LightMode;
@@ -419,23 +404,7 @@ void Renderer::DrawLaraHair(RendererItem* itemToDraw, RendererRoom* room, Render
 		_stItem.Skinned = (int)skinned;
 		_stItem.WaterAmbientLight = _stItem.AmbientLight;
 		_stItem.WaterHeight = FLT_MAX;
-		if (g_Configuration.EnableCaustics)
-		{
-			const auto& nativeItem = g_Level.Items[itemToDraw->ItemNumber];
-			int waterHeight = GetPointCollision(nativeItem.Pose.Position, nativeItem.RoomNumber).GetWaterSurfaceHeight();
-			if (waterHeight != NO_HEIGHT && !(g_Level.Rooms[nativeItem.RoomNumber].flags & ENV_FLAG_NOCAUSTICS))
-			{
-				_stItem.WaterHeight = (float)waterHeight;
-
-				auto waterPos = Vector3i(nativeItem.Pose.Position.x, waterHeight + 1, nativeItem.Pose.Position.z);
-				int waterRoomNumber = GetPointCollision(waterPos, nativeItem.RoomNumber).GetRoomNumber();
-				_stItem.WaterAmbientLight = _rooms[waterRoomNumber].AmbientLight;
-
-				auto airPos = Vector3i(nativeItem.Pose.Position.x, waterHeight - 1, nativeItem.Pose.Position.z);
-				int airRoomNumber = GetPointCollision(airPos, nativeItem.RoomNumber).GetRoomNumber();
-				_stItem.AmbientLight = _rooms[airRoomNumber].AmbientLight;
-			}
-		}
+		UpdateItemWaterCache(*itemToDraw, g_Level.Items[itemToDraw->ItemNumber]);
 
 		ReflectMatrixOptionally(_stItem.BonesMatrices[0]);
 
