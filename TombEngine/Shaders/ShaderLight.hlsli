@@ -426,4 +426,13 @@ float3 StaticLight(float3 vertex, float3 tex, float fogBulbsDensity, float3 emis
 	return saturate(result);
 }
 
+float3 StaticLight(float3 ambient, float3 vertex, float3 tex, float fogBulbsDensity, float3 emissive)
+{
+	float3 result = ambient * tex + emissive;
+
+	result -= float3(fogBulbsDensity, fogBulbsDensity, fogBulbsDensity);
+
+	return saturate(result * vertex);
+}
+
 #endif
