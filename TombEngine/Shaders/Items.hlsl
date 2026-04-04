@@ -133,7 +133,7 @@ PixelShaderOutput PS(PixelShaderInput input)
 			emissive, 
 			specular,
 			roughness) :
-		StaticLight(input.Color.xyz, tex.xyz, input.FogBulbs.w, emissive);
+      StaticLight(ambient, input.Color.xyz, tex.xyz, input.FogBulbs.w, emissive);
 
 	float shadowable = step(0.5f, float((NumItemLights & SHADOWABLE_MASK) == SHADOWABLE_MASK));
 	float3 shadow = DoShadow(input.WorldPosition, normal, color, -0.5f);
