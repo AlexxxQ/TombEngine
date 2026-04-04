@@ -497,6 +497,7 @@ namespace TEN::Renderer
 		void DrawLaraHolsters(RendererItem* itemToDraw, RendererRoom* room, RenderView& view, RendererPass rendererPass);
 		void DrawLaraJoints(RendererItem* itemToDraw, RendererRoom* room, RenderView& view, RendererPass rendererPass);
 		void DrawLaraHair(RendererItem* itemToDraw, RendererRoom* room, RenderView& view, RendererPass rendererPass);
+		void UpdateItemWaterCache(RendererItem& rItem, const ItemInfo& nativeItem);
 		void DrawMesh(RendererItem* itemToDraw, RendererMesh* mesh, RendererObjectType type, int boneIndex, bool skinned, RenderView& view, RendererPass rendererPass);
 		void PrepareSimpleParticles(RenderView& view);
 		void PrepareStreamers(RenderView& view);
