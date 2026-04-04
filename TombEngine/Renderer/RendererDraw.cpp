@@ -7,6 +7,7 @@
 
 #include "ConstantBuffers/CameraMatrixBuffer.h"
 #include "Game/Animation/Animation.h"
+#include "Game/Debug/Debug.h"
 #include "Game/camera.h"
 #include "Game/control/control.h"
 #include "Game/collision/Point.h"
@@ -3847,6 +3848,126 @@ namespace TEN::Renderer
 		ResetScissor();
 	}
 
+	void Renderer::UpdateItemWaterCache(RendererItem& rItem, const ItemInfo& nativeItem)
+	{
+		if (!g_Configuration.EnableCaustics)
+			return;
+
+		// For Lara: keep cached tint data stable until water status changes.
+        if (&nativeItem == LaraItem)
+		{
+			auto currentWaterStatus = Lara.Control.WaterStatus;
+			bool isUnderwaterPortalTransition =
+				(currentWaterStatus != WaterStatus::Dry) &&
+				(rItem.PrevRoomNumber != NO_VALUE) &&
+				(rItem.PrevRoomNumber != nativeItem.RoomNumber) &&
+				((g_Level.Rooms[rItem.PrevRoomNumber].flags & ENV_FLAG_WATER) != 0) &&
+				((g_Level.Rooms[nativeItem.RoomNumber].flags & ENV_FLAG_WATER) != 0) &&
+				(rItem.LightFade < 1.0f);
+
+           if (rItem.WaterStatusInitialized)
+			{
+               // Same status in water: keep cache stable.
+				if (currentWaterStatus == rItem.CachedWaterStatus &&
+                 currentWaterStatus != WaterStatus::Dry &&
+					rItem.WaterCacheRoom == nativeItem.RoomNumber &&
+					!isUnderwaterPortalTransition)
+				{
+					_stItem.WaterHeight = rItem.CachedWaterHeight;
+					_stItem.WaterAmbientLight = rItem.CachedWaterAmbient;
+					_stItem.AmbientLight = rItem.CachedAirAmbient;
+					return;
+				}
+
+				// First frame of deep-water -> dry: keep previous cache for one frame
+				// to avoid full water retint flash.
+				if (currentWaterStatus != rItem.CachedWaterStatus &&
+					currentWaterStatus == WaterStatus::Dry &&
+					(rItem.CachedWaterStatus == WaterStatus::TreadWater ||
+					 rItem.CachedWaterStatus == WaterStatus::Underwater))
+				{
+					_stItem.WaterHeight = rItem.CachedWaterHeight;
+					_stItem.WaterAmbientLight = rItem.CachedWaterAmbient;
+					_stItem.AmbientLight = rItem.CachedAirAmbient;
+
+					rItem.CachedWaterStatus = currentWaterStatus;
+					return;
+				}
+			}
+
+			rItem.CachedWaterStatus = currentWaterStatus;
+			rItem.WaterStatusInitialized = true;
+		}
+
+		auto aabb = nativeItem.GetAabb();
+		float aabbBottom = aabb.Center.y + aabb.Extents.y;
+		bool isUnderwaterPortalTransition =
+			(&nativeItem == LaraItem) &&
+			(Lara.Control.WaterStatus != WaterStatus::Dry) &&
+			(rItem.PrevRoomNumber != NO_VALUE) &&
+			(rItem.PrevRoomNumber != nativeItem.RoomNumber) &&
+			((g_Level.Rooms[rItem.PrevRoomNumber].flags & ENV_FLAG_WATER) != 0) &&
+			((g_Level.Rooms[nativeItem.RoomNumber].flags & ENV_FLAG_WATER) != 0) &&
+			(rItem.LightFade < 1.0f);
+
+		// Cache is valid when in the same room and item bottom hasn't risen above water.
+		bool cacheValid = rItem.WaterCacheRoom == nativeItem.RoomNumber &&
+						  rItem.CachedWaterHeight < FLT_MAX &&
+                          aabbBottom >= rItem.CachedWaterHeight &&
+						  !isUnderwaterPortalTransition;
+
+		if (cacheValid)
+		{
+			_stItem.WaterHeight       = rItem.CachedWaterHeight;
+			_stItem.WaterAmbientLight = rItem.CachedWaterAmbient;
+			_stItem.AmbientLight      = rItem.CachedAirAmbient;
+			return;
+		}
+
+		// Recalculate.
+		_stItem.WaterHeight       = FLT_MAX;
+		_stItem.WaterAmbientLight = rItem.AmbientLight;
+
+		if (!(g_Level.Rooms[nativeItem.RoomNumber].flags & ENV_FLAG_NOCAUSTICS))
+		{
+			int waterHeight = GetPointCollision(nativeItem.Pose.Position, nativeItem.RoomNumber).GetWaterSurfaceHeight();
+
+			if (waterHeight != NO_HEIGHT && aabbBottom >= waterHeight)
+			{
+				auto waterPos = Vector3i(nativeItem.Pose.Position.x, waterHeight + 1, nativeItem.Pose.Position.z);
+				int waterRoomNumber = GetPointCollision(waterPos, nativeItem.RoomNumber).GetRoomNumber();
+
+				if (g_Level.Rooms[waterRoomNumber].flags & ENV_FLAG_WATER)
+				{
+					_stItem.WaterHeight       = (float)waterHeight;
+					_stItem.WaterAmbientLight = _rooms[waterRoomNumber].AmbientLight;
+
+					auto airPos = Vector3i(nativeItem.Pose.Position.x, waterHeight - 1, nativeItem.Pose.Position.z);
+					_stItem.AmbientLight = _rooms[GetPointCollision(airPos, nativeItem.RoomNumber).GetRoomNumber()].AmbientLight;
+				}
+			}
+		}
+
+		if (isUnderwaterPortalTransition)
+		{
+           // Keep caustics active during horizontal underwater portal transition.
+			// Some transition frames may fail water height query in target room;
+			// in that case preserve previous valid water height from cache.
+			if (_stItem.WaterHeight >= FLT_MAX && rItem.CachedWaterHeight < FLT_MAX)
+				_stItem.WaterHeight = rItem.CachedWaterHeight;
+
+			auto prevAmbient = _rooms[rItem.PrevRoomNumber].AmbientLight;
+			auto currAmbient = _rooms[nativeItem.RoomNumber].AmbientLight;
+			_stItem.WaterAmbientLight = Vector4::Lerp(prevAmbient, currAmbient, rItem.LightFade);
+		}
+
+		// Store in cache.
+		rItem.WaterCacheRoom     = nativeItem.RoomNumber;
+		rItem.CachedWaterHeight  = _stItem.WaterHeight;
+		rItem.CachedWaterAmbient = _stItem.WaterAmbientLight;
+		rItem.CachedAirAmbient   = _stItem.AmbientLight;
+	}
+
 	void Renderer::DrawItemSorted(RendererSortableObject* objectInfo, RendererObjectType lastObjectType, RenderView& view)
 	{
 		if (lastObjectType != objectInfo->ObjectType)
@@ -3874,23 +3995,7 @@ namespace TEN::Renderer
 		_stItem.WaterAmbientLight = objectInfo->Item->AmbientLight;
 		_stItem.WaterHeight = FLT_MAX;
 		_stItem.Skinned = (int)(objectInfo->Skinned ? SkinningMode::Full : SkinningMode::None);
-		if (g_Configuration.EnableCaustics)
-		{
-			const auto& nativeItem = g_Level.Items[objectInfo->Item->ItemNumber];
-			int waterHeight = GetPointCollision(nativeItem.Pose.Position, nativeItem.RoomNumber).GetWaterSurfaceHeight();
-			if (waterHeight != NO_HEIGHT && !(g_Level.Rooms[nativeItem.RoomNumber].flags & ENV_FLAG_NOCAUSTICS))
-			{
-				_stItem.WaterHeight = (float)waterHeight;
-
-				auto waterPos = Vector3i(nativeItem.Pose.Position.x, waterHeight + 1, nativeItem.Pose.Position.z);
-				int waterRoomNumber = GetPointCollision(waterPos, nativeItem.RoomNumber).GetRoomNumber();
-				_stItem.WaterAmbientLight = _rooms[waterRoomNumber].AmbientLight;
-
-				auto airPos = Vector3i(nativeItem.Pose.Position.x, waterHeight - 1, nativeItem.Pose.Position.z);
-				int airRoomNumber = GetPointCollision(airPos, nativeItem.RoomNumber).GetRoomNumber();
-				_stItem.AmbientLight = _rooms[airRoomNumber].AmbientLight;
-			}
-		}
+		UpdateItemWaterCache(*objectInfo->Item, g_Level.Items[objectInfo->Item->ItemNumber]);
 
 		const auto& moveableObj = *_moveableObjects[objectInfo->Item->ObjectID];
 
@@ -4038,23 +4143,7 @@ namespace TEN::Renderer
 		_stItem.WaterAmbientLight = objectInfo->Item->AmbientLight;
 		_stItem.WaterHeight = FLT_MAX;
 		_stItem.Skinned = (int)(objectInfo->Skinned ? SkinningMode::Full : SkinningMode::None);
-		if (g_Configuration.EnableCaustics)
-		{
-			const auto& nativeItem = g_Level.Items[objectInfo->Item->ItemNumber];
-			int waterHeight = GetPointCollision(nativeItem.Pose.Position, nativeItem.RoomNumber).GetWaterSurfaceHeight();
-			if (waterHeight != NO_HEIGHT && !(g_Level.Rooms[nativeItem.RoomNumber].flags & ENV_FLAG_NOCAUSTICS))
-			{
-				_stItem.WaterHeight = (float)waterHeight;
-
-				auto waterPos = Vector3i(nativeItem.Pose.Position.x, waterHeight + 1, nativeItem.Pose.Position.z);
-				int waterRoomNumber = GetPointCollision(waterPos, nativeItem.RoomNumber).GetRoomNumber();
-				_stItem.WaterAmbientLight = _rooms[waterRoomNumber].AmbientLight;
-
-				auto airPos = Vector3i(nativeItem.Pose.Position.x, waterHeight - 1, nativeItem.Pose.Position.z);
-				int airRoomNumber = GetPointCollision(airPos, nativeItem.RoomNumber).GetRoomNumber();
-				_stItem.AmbientLight = _rooms[airRoomNumber].AmbientLight;
-			}
-		}
+		UpdateItemWaterCache(*objectInfo->Item, g_Level.Items[objectInfo->Item->ItemNumber]);
 
 		const auto& moveableObj = *_moveableObjects[(int)GAME_OBJECT_ID::ID_HAIR_PRIMARY + index];
 
