@@ -56,7 +56,9 @@ namespace TEN::Renderer::Structures
 		float   CachedWaterHeight   = FLT_MAX;
 		Vector4 CachedWaterAmbient  = Vector4::One;
 		Vector4 CachedAirAmbient    = Vector4::One;
-      WaterStatus CachedWaterStatus = WaterStatus::Dry;
-		bool        WaterStatusInitialized = false;
+		WaterStatus CachedWaterStatus = WaterStatus::Dry;
+		bool    WaterStatusInitialized = false;
+		bool    CachedFlipStatus = false;
+		bool    FlipStatusInitialized = false;
 	};
 }
