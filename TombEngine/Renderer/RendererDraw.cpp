@@ -87,6 +87,7 @@ namespace TEN::Renderer
 						newSphere.radius = mesh.sphere.Radius * sphereScaleFactors[i];
 					}
 				}
+
 				else
 				{
 					auto bounds = GameBoundingBox(&nativeItem);
@@ -3857,6 +3858,7 @@ namespace TEN::Renderer
         if (&nativeItem == LaraItem)
 		{
 			auto currentWaterStatus = Lara.Control.WaterStatus;
+          bool flipChanged = rItem.FlipStatusInitialized && (rItem.CachedFlipStatus != FlipStatus);
 			bool isUnderwaterPortalTransition =
 				(currentWaterStatus != WaterStatus::Dry) &&
 				(rItem.PrevRoomNumber != NO_VALUE) &&
@@ -3865,11 +3867,18 @@ namespace TEN::Renderer
 				((g_Level.Rooms[nativeItem.RoomNumber].flags & ENV_FLAG_WATER) != 0) &&
 				(rItem.LightFade < 1.0f);
 
-           if (rItem.WaterStatusInitialized)
+			if (flipChanged)
+			{
+				rItem.WaterCacheRoom = NO_VALUE;
+				rItem.CachedWaterHeight = FLT_MAX;
+				rItem.WaterStatusInitialized = false;
+			}
+
+            if (rItem.WaterStatusInitialized)
 			{
                // Same status in water: keep cache stable.
 				if (currentWaterStatus == rItem.CachedWaterStatus &&
-                 currentWaterStatus != WaterStatus::Dry &&
+					currentWaterStatus != WaterStatus::Dry &&
 					rItem.WaterCacheRoom == nativeItem.RoomNumber &&
 					!isUnderwaterPortalTransition)
 				{
@@ -3897,10 +3906,19 @@ namespace TEN::Renderer
 
 			rItem.CachedWaterStatus = currentWaterStatus;
 			rItem.WaterStatusInitialized = true;
+           rItem.CachedFlipStatus = FlipStatus;
+			rItem.FlipStatusInitialized = true;
 		}
 
 		auto aabb = nativeItem.GetAabb();
 		float aabbBottom = aabb.Center.y + aabb.Extents.y;
+     if (!rItem.FlipStatusInitialized || rItem.CachedFlipStatus != FlipStatus)
+		{
+			rItem.WaterCacheRoom = NO_VALUE;
+			rItem.CachedWaterHeight = FLT_MAX;
+			rItem.CachedFlipStatus = FlipStatus;
+			rItem.FlipStatusInitialized = true;
+		}
 		bool isUnderwaterPortalTransition =
 			(&nativeItem == LaraItem) &&
 			(Lara.Control.WaterStatus != WaterStatus::Dry) &&
@@ -3946,6 +3964,16 @@ namespace TEN::Renderer
 					_stItem.AmbientLight = _rooms[GetPointCollision(airPos, nativeItem.RoomNumber).GetRoomNumber()].AmbientLight;
 				}
 			}
+		}
+
+		// Keep previous valid caustics height if Lara is still in water but current room query
+		// failed on this frame (common on some underwater room portal transitions).
+		if (&nativeItem == LaraItem &&
+			Lara.Control.WaterStatus != WaterStatus::Dry &&
+			_stItem.WaterHeight >= FLT_MAX &&
+			rItem.CachedWaterHeight < FLT_MAX)
+		{
+			_stItem.WaterHeight = rItem.CachedWaterHeight;
 		}
 
 		if (isUnderwaterPortalTransition)
