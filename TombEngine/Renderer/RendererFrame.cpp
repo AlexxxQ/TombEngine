@@ -3,6 +3,8 @@
 
 #include "Game/Animation/Animation.h"
 #include "Game/camera.h"
+#include "Game/Debug/Debug.h"
+#include "Game/collision/Point.h"
 #include "Game/collision/Sphere.h"
 #include "Game/effects/Decal.h"
 #include "Game/effects/effects.h"
@@ -816,21 +818,124 @@ namespace TEN::Renderer
 			item->PrevRoomNumber = nativeItem->RoomNumber;
 			item->RoomNumber = nativeItem->RoomNumber;
 			item->LightFade = 1.0f;
+           item->LightFadeStep = AMBIENT_LIGHT_INTERPOLATION_STEP;
 		}
 		else if (nativeItem->RoomNumber != item->RoomNumber)
 		{
 			item->PrevRoomNumber = item->RoomNumber;
 			item->RoomNumber = nativeItem->RoomNumber;
-			item->LightFade = 0.0f;
+
+           // Skip interpolation only when Lara has already emerged above water surface.
+			// If room changes early while she's still effectively in water (deep-water grab),
+			// keep normal interpolation for smooth transition.
+			bool prevWater = (g_Level.Rooms[item->PrevRoomNumber].flags & ENV_FLAG_WATER) != 0;
+			bool currWater = (g_Level.Rooms[item->RoomNumber].flags  & ENV_FLAG_WATER) != 0;
+
+         if (prevWater != currWater)
+			{
+				bool skipInterpolation = false;
+				bool slowInterpolation = false;
+
+				if (nativeItem->ObjectNumber == ID_LARA && prevWater && !currWater)
+				{
+                 // Fast shallow-water exit: if gameplay already switched to Dry from Wade,
+					// avoid restarting ambient from full water room tint.
+					if (Lara.Control.WaterStatus == WaterStatus::Dry &&
+						item->WaterStatusInitialized &&
+						item->CachedWaterStatus == WaterStatus::Wade)
+					{
+						skipInterpolation = true;
+					}
+					else
+					{
+                  // If Lara already had dry/non-full-water ambient while still being in water room
+					// (shallow water + ledge grab case), do not start blend from full water ambient.
+                    auto dryAmbient = _rooms[item->RoomNumber].AmbientLight;
+					dryAmbient *= nativeItem->Model.Color;
+                    auto waterAmbient = _rooms[item->PrevRoomNumber].AmbientLight;
+					waterAmbient *= nativeItem->Model.Color;
+                    int waterHeightForRoot = TEN::Collision::Point::GetPointCollision(
+						nativeItem->Pose.Position, item->PrevRoomNumber).GetWaterSurfaceHeight();
+					bool rootAboveWater = (waterHeightForRoot != NO_HEIGHT) &&
+						((float)nativeItem->Pose.Position.y < (float)waterHeightForRoot);
+					bool alreadyDryAmbient =
+						(std::abs(item->AmbientLight.x - dryAmbient.x) < 0.001f) &&
+						(std::abs(item->AmbientLight.y - dryAmbient.y) < 0.001f) &&
+						(std::abs(item->AmbientLight.z - dryAmbient.z) < 0.001f);
+					bool alreadyNotFullWaterAmbient =
+						(std::abs(item->AmbientLight.x - waterAmbient.x) > 0.001f) ||
+						(std::abs(item->AmbientLight.y - waterAmbient.y) > 0.001f) ||
+						(std::abs(item->AmbientLight.z - waterAmbient.z) > 0.001f);
+
+                  if (alreadyDryAmbient ||
+                       (Lara.Control.WaterStatus == WaterStatus::Dry && (alreadyNotFullWaterAmbient || rootAboveWater)))
+					{
+						skipInterpolation = true;
+					}
+					else
+					{
+					auto aabb = nativeItem->GetAabb();
+					float aabbBottom = aabb.Center.y + aabb.Extents.y;
+                 int waterHeight = TEN::Collision::Point::GetPointCollision(
+						nativeItem->Pose.Position, item->PrevRoomNumber).GetWaterSurfaceHeight();
+					float effectiveWaterHeight = (waterHeight != NO_HEIGHT) ? (float)waterHeight : item->CachedWaterHeight;
+
+					if (effectiveWaterHeight < FLT_MAX)
+					{
+                     skipInterpolation = (aabbBottom < effectiveWaterHeight);
+						slowInterpolation = !skipInterpolation;
+					}
+					else
+					{
+                       // Unknown water surface on transition frame: prefer smooth fade.
+						skipInterpolation = false;
+						slowInterpolation = true;
+					}
+                    }
+                   }
+				}
+
+				item->LightFade = skipInterpolation ? 1.0f : 0.0f;
+              item->LightFadeStep = slowInterpolation ? (1.0f / FPS) : AMBIENT_LIGHT_INTERPOLATION_STEP;
+			}
+			else
+			{
+				item->LightFade = 0.0f;
+               item->LightFadeStep = AMBIENT_LIGHT_INTERPOLATION_STEP;
+			}
 		}
-		else if (item->LightFade < 1.0f)
+        else if (item->LightFade < 1.0f && item->LastLightFadeFrame != GlobalCounter)
 		{
-			item->LightFade += AMBIENT_LIGHT_INTERPOLATION_STEP;
+            item->LightFade += item->LightFadeStep;
 			item->LightFade = std::clamp(item->LightFade, 0.0f, 1.0f);
+           item->LastLightFadeFrame = GlobalCounter;
 		}
 
 		if (item->PrevRoomNumber == NO_VALUE || item->LightFade == 1.0f)
-			item->AmbientLight = _rooms[nativeItem->RoomNumber].AmbientLight;
+		{
+			int ambientRoom = nativeItem->RoomNumber;
+
+			// When Lara is in a water room but her AABB is above the water surface
+			// (e.g. hanging or climbing out), use the air room ambient above the water
+			// so the dark water-room tint is not visible during the climb animation.
+			if (nativeItem->ObjectNumber == ID_LARA &&
+				(g_Level.Rooms[nativeItem->RoomNumber].flags & ENV_FLAG_WATER))
+			{
+				auto aabb = nativeItem->GetAabb();
+				float aabbBottom = aabb.Center.y + aabb.Extents.y;
+				int waterHeight = TEN::Collision::Point::GetPointCollision(
+					nativeItem->Pose.Position, nativeItem->RoomNumber).GetWaterSurfaceHeight();
+				if (waterHeight != NO_HEIGHT && aabbBottom < waterHeight)
+				{
+					auto airPos = Vector3i(nativeItem->Pose.Position.x, waterHeight - 1, nativeItem->Pose.Position.z);
+					int airRoom = TEN::Collision::Point::GetPointCollision(airPos, nativeItem->RoomNumber).GetRoomNumber();
+					if (!(g_Level.Rooms[airRoom].flags & ENV_FLAG_WATER))
+						ambientRoom = airRoom;
+				}
+			}
+
+			item->AmbientLight = _rooms[ambientRoom].AmbientLight;
+		}
 		else
 		{
 			auto prev = _rooms[item->PrevRoomNumber].AmbientLight;
