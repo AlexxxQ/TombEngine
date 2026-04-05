@@ -140,8 +140,8 @@ PixelShaderOutput PS(PixelShaderInput input)
 	shadow = DoBlobShadows(input.WorldPosition, shadow);
 	color = lerp(color, shadow, shadowable);
 
-	// Caustics (per-pixel, below water surface)
-	if (waterTint > 0.0f)
+    // Caustics (per-pixel, below water surface)
+	if (waterTint > 0.0f && ItemPad1 == 0)
 	{
 		float causticsAtten = saturate(dot(float3(0.0f, -1.0f, 0.0f), normal));
 
