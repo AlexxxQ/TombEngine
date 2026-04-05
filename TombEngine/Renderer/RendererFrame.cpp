@@ -531,7 +531,7 @@ namespace TEN::Renderer
 			for (int j = 0; j < MAX_BONES; j++)
 				newItem.InterpolatedAnimTransforms[j] = Matrix::Lerp(newItem.PrevAnimTransforms[j], newItem.AnimTransforms[j], GetInterpolationFactor(forceValue));
 
-			// NOTE: now at least positions and animations are updated,
+          // NOTE: now at least positions and animations are updated,
 			// because even off-screen the correct position is required 
 			// by GetJointPosition functions and similars
 			if (!inFrustum)
@@ -866,8 +866,15 @@ namespace TEN::Renderer
 						(std::abs(item->AmbientLight.y - waterAmbient.y) > 0.001f) ||
 						(std::abs(item->AmbientLight.z - waterAmbient.z) > 0.001f);
 
-                  if (alreadyDryAmbient ||
-                       (Lara.Control.WaterStatus == WaterStatus::Dry && (alreadyNotFullWaterAmbient || rootAboveWater)))
+						// Deep-water exit edge case: if Lara already has non-full-water ambient
+						// (e.g. head above water), do not re-tint whole body to full water color.
+						if ((item->WaterStatusInitialized && item->CachedWaterStatus == WaterStatus::TreadWater) &&
+							alreadyNotFullWaterAmbient)
+						{
+							skipInterpolation = true;
+						}
+						else if (alreadyDryAmbient ||
+							(Lara.Control.WaterStatus == WaterStatus::Dry && (alreadyNotFullWaterAmbient || rootAboveWater)))
 					{
 						skipInterpolation = true;
 					}
@@ -896,6 +903,7 @@ namespace TEN::Renderer
 
 				item->LightFade = skipInterpolation ? 1.0f : 0.0f;
               item->LightFadeStep = slowInterpolation ? (1.0f / FPS) : AMBIENT_LIGHT_INTERPOLATION_STEP;
+
 			}
 			else
 			{
