@@ -909,10 +909,10 @@ bool CreaturePathfind(ItemInfo* item, Vector3i prevPos, short angle, short tilt)
 			floor = GetFloor(item->Pose.Position.x, item->Pose.Position.y, item->Pose.Position.z, &roomNumber);
 			item->Floor = GetFloorHeight(floor, item->Pose.Position.x, item->Pose.Position.y, item->Pose.Position.z);
 			if (item->Pose.Position.y > item->Floor)
-			\titem->Pose.Position.y = item->Floor;
+				item->Pose.Position.y = item->Floor;
 		}
 
-	\treturn true;
+		return true;
 	}
 
 	// VERTICAL MOVEMENT:
