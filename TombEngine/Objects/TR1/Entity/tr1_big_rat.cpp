@@ -83,7 +83,7 @@ namespace TEN::Entities::Creatures::TR1
 
 	static bool IsBigRatOnWater(ItemInfo* item)
 	{
-		return (GetPointCollision(*item).GetWaterTopHeight() != NO_HEIGHT);
+		return (TestEnvironment(ENV_FLAG_WATER, item) || TestEnvironment(ENV_FLAG_SWAMP, item));
 	}
 
 	static void SetBigRatWater(ItemInfo* item)
@@ -109,6 +109,7 @@ namespace TEN::Entities::Creatures::TR1
 
 		auto* item = &g_Level.Items[itemNumber];
 		auto* creature = GetCreatureInfo(item);
+		auto prevPos = item->Pose.Position;
 
 		short angle = 0;
 		short head = 0;
@@ -239,6 +240,21 @@ namespace TEN::Entities::Creatures::TR1
 
 		CreatureJoint(item, 0, head);
 		CreatureAnimation(itemNumber, angle, 0);
+
+		//avoid stucking at platforms on water surface.
+        if (item->Animation.ActiveState == BIG_RAT_STATE_SWIM)
+		{
+			if (item->ItemFlags[0] > 0)
+			{
+				item->Pose.Orientation.y += (short)(item->ItemFlags[1] * BIG_RAT_RUN_TURN_RATE_MAX);
+				item->ItemFlags[0]--;
+			}
+			else if (item->Pose.Position.x == prevPos.x && item->Pose.Position.z == prevPos.z)
+			{
+				item->ItemFlags[0] = 20; // Frames to apply turn.
+				item->ItemFlags[1] = Random::TestProbability(1 / 2.0f) ? 1 : -1; // Random Turn direction.
+			}
+		}
 
 		if (isOnWater)
 		{
