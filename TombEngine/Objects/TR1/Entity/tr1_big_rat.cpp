@@ -82,9 +82,9 @@ namespace TEN::Entities::Creatures::TR1
 	}
 
 	static bool IsBigRatOnWater(ItemInfo* item)
-	{
-		return (TestEnvironment(ENV_FLAG_WATER, item) || TestEnvironment(ENV_FLAG_SWAMP, item));
-	}
+{
+	return (GetPointCollision(*item).GetWaterTopHeight() != NO_HEIGHT);
+}
 
 	static void SetBigRatWater(ItemInfo* item)
 	{
