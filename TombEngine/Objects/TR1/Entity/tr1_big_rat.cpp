@@ -241,8 +241,8 @@ namespace TEN::Entities::Creatures::TR1
 		CreatureJoint(item, 0, head);
 		CreatureAnimation(itemNumber, angle, 0);
 
-		//avoid stucking at platforms on water surface.
-        if (item->Animation.ActiveState == BIG_RAT_STATE_SWIM)
+		//Avoid stucking at platforms on water surface.
+		if (item->Animation.ActiveState == BIG_RAT_STATE_SWIM)
 		{
 			if (item->ItemFlags[0] > 0)
 			{
@@ -256,22 +256,20 @@ namespace TEN::Entities::Creatures::TR1
 			}
 		}
 
-		if (isOnWater)
+		if ((item->Animation.ActiveState == BIG_RAT_STATE_SWIM ||
+			item->Animation.ActiveState == BIG_RAT_STATE_SWIM_BITE_ATTACK) &&
+			IsBigRatOnWater(item))
 		{
 			CreatureUnderwater(item, 0);
 			item->Pose.Position.y = GetPointCollision(*item).GetWaterTopHeight() - BIG_RAT_WATER_SURFACE_OFFSET;
 
-			if (item->Animation.ActiveState == BIG_RAT_STATE_SWIM ||
-				item->Animation.ActiveState == BIG_RAT_STATE_SWIM_BITE_ATTACK)
+			if (!(Wibble & 30))
 			{
-				if (!(Wibble & 30))
-				{
-					SpawnRipple(
-						item->Pose.Position.ToVector3(),
-						item->RoomNumber,
-						BIG_RAT_RIPPLE_RADIUS,
-						(int)RippleFlags::SlowFade | (int)RippleFlags::LowOpacity);
-				}
+				SpawnRipple(
+					item->Pose.Position.ToVector3(),
+					item->RoomNumber,
+					BIG_RAT_RIPPLE_RADIUS,
+					(int)RippleFlags::SlowFade | (int)RippleFlags::LowOpacity);
 			}
 		}
 		else
