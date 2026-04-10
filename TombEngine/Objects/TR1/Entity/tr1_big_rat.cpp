@@ -69,7 +69,7 @@ namespace TEN::Entities::Creatures::TR1
 		BIG_RAT_ANIM_WATER_DEATH = 11
 	};
 
-	void InitializeBigRat(short itemNumber)
+		void InitializeBigRat(short itemNumber)
 	{
 		auto* item = &g_Level.Items[itemNumber];
 
@@ -82,15 +82,35 @@ namespace TEN::Entities::Creatures::TR1
 	}
 
 	static bool IsBigRatOnWater(ItemInfo* item)
-{
-	return (GetPointCollision(*item).GetWaterTopHeight() != NO_HEIGHT);
-}
+	{
+		return (GetPointCollision(*item).GetWaterSurfaceHeight() != NO_HEIGHT);
+	}
+
+	static bool IsBigRatAboveWaterPortal(ItemInfo* item)
+	{
+     // Use head joint position as offset for next sector detection.
+		auto headPos = GetJointPosition(*item, 2);
+       int probeX = headPos.x;
+		int probeZ = headPos.z;
+
+		short roomNum = item->RoomNumber;
+		auto* sector = GetFloor(probeX, headPos.y, probeZ, &roomNum);
+		if (!sector)
+			return false;
+
+		auto belowRoom = sector->GetNextRoomNumber(Vector3i(probeX, headPos.y, probeZ), true);
+		if (!belowRoom.has_value())
+			return false;
+
+		int belowRoomNum = belowRoom.value();
+		return (TestEnvironment(ENV_FLAG_WATER, belowRoomNum) || TestEnvironment(ENV_FLAG_SWAMP, belowRoomNum));
+	}
 
 	static void SetBigRatWater(ItemInfo* item)
 	{
 		auto& creature = *GetCreatureInfo(item);
 
-		if (IsBigRatOnWater(item))
+		if (IsBigRatOnWater(item) || IsBigRatAboveWaterPortal(item))
 		{
 			creature.LOT.Step = BLOCK(20);
 			creature.LOT.Drop = -BLOCK(20);
@@ -256,8 +276,7 @@ namespace TEN::Entities::Creatures::TR1
 			}
 		}
 
-		if ((item->Animation.ActiveState == BIG_RAT_STATE_SWIM ||
-			item->Animation.ActiveState == BIG_RAT_STATE_SWIM_BITE_ATTACK) &&
+		if ((item->Animation.ActiveState == BIG_RAT_STATE_SWIM || item->Animation.ActiveState == BIG_RAT_STATE_SWIM_BITE_ATTACK) &&
 			IsBigRatOnWater(item))
 		{
 			CreatureUnderwater(item, 0);
@@ -274,6 +293,33 @@ namespace TEN::Entities::Creatures::TR1
 		}
 		else
 		{
+            if (item->Animation.ActiveState == BIG_RAT_STATE_SWIM || item->Animation.ActiveState == BIG_RAT_STATE_SWIM_BITE_ATTACK)
+			{
+				int waterTop = GetPointCollision(*item).GetWaterTopHeight();
+				if (waterTop != NO_HEIGHT)
+				{
+					int targetY = waterTop - CLICK(1);
+					int dryRoom = FindRoomNumber(Vector3i(item->Pose.Position.x, targetY, item->Pose.Position.z), item->RoomNumber, true);
+
+					if (dryRoom != NO_VALUE &&
+						dryRoom != item->RoomNumber && !TestEnvironment(ENV_FLAG_WATER, dryRoom) && !TestEnvironment(ENV_FLAG_SWAMP, dryRoom))
+					{
+						short roomNum = (short)dryRoom;
+						auto* drySector = GetFloor(item->Pose.Position.x, targetY, item->Pose.Position.z, &roomNum);
+						if (drySector)
+						{
+							int dryFloor = GetFloorHeight(drySector, item->Pose.Position.x, targetY, item->Pose.Position.z);
+							if ((waterTop - dryFloor) >= 0 && (waterTop - dryFloor) <= CLICK(1))
+							{
+								item->Pose.Position.y = dryFloor;
+								ItemNewRoom(itemNumber, roomNum);
+								return;
+							}
+						}
+					}
+				}
+			}
+
 			item->Pose.Position.y = item->Floor;
 		}
 	}
