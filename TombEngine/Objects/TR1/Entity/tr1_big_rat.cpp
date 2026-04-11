@@ -239,7 +239,10 @@ namespace TEN::Entities::Creatures::TR1
 		}
 
 		CreatureJoint(item, 0, head);
-		CreatureAnimation(itemNumber, angle, 0);
+		if (!isOnWater)
+			CreatureVault(itemNumber, angle, 2, 0); //Interpolate descent steps in dry rooms.
+		else
+			CreatureAnimation(itemNumber, angle, 0);
 
 		//Avoid stucking at platforms on water surface.
 		if (item->Animation.ActiveState == BIG_RAT_STATE_SWIM)
@@ -271,10 +274,6 @@ namespace TEN::Entities::Creatures::TR1
 					BIG_RAT_RIPPLE_RADIUS,
 					(int)RippleFlags::SlowFade | (int)RippleFlags::LowOpacity);
 			}
-		}
-		else
-		{
-			item->Pose.Position.y = item->Floor;
 		}
 	}
 }
