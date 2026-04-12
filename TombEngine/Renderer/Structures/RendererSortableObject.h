@@ -20,6 +20,7 @@ namespace TEN::Renderer::Structures
 		Matrix	World	 = Matrix::Identity;
 		Vector3 Centre	 = Vector3::Zero; // TODO: Rename to Center.
 		int		Distance = 0;
+		Vector4 TintColor = Vector4::One;
 
 		BlendMode BlendMode = BlendMode::Opaque;
 		LightMode LightMode = LightMode::Dynamic;
