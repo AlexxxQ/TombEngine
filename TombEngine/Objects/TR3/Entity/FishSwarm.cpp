@@ -37,6 +37,11 @@ using namespace TEN::Renderer;
 
 namespace TEN::Entities::Creatures::TR3
 {
+   static int GetFishMeshIndexFromOcb(short ocb)
+	{
+      return abs((int)ocb);
+	}
+
 	constexpr auto FISH_HARM_DAMAGE				 = 3;
 	constexpr auto FISH_VELOCITY_MAX			 = 10.0f;
 	constexpr auto FISH_COHESION_FACTOR			 = 100.1f;
@@ -76,7 +81,7 @@ namespace TEN::Entities::Creatures::TR3
 		// Create new fish.
 		auto& fish = GetNewEffect(FishSwarm, FISH_COUNT_MAX);
 
-		fish.MeshIndex = abs(item.TriggerFlags);
+        fish.MeshIndex = GetFishMeshIndexFromOcb(item.TriggerFlags);
 		fish.IsLethal = (item.TriggerFlags < 0) ? true : false;
 		fish.IsPatrolling = item.ItemFlags[6];
 
@@ -206,6 +211,8 @@ namespace TEN::Entities::Creatures::TR3
 				if (fish.Life <= 0.0f)
 					continue;
 
+              fish.MeshIndex = GetFishMeshIndexFromOcb(item.TriggerFlags);
+				fish.IsLethal = (item.TriggerFlags < 0);
 				fish.RoomNumber = item.RoomNumber;
 				fish.TargetItemPtr = &g_Level.Items[item.ItemFlags[1]];	
 			}
