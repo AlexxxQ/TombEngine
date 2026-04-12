@@ -670,6 +670,7 @@ namespace TEN::Renderer
 						object.ObjectType = RendererObjectType::MoveableAsStatic;
 						object.Centre = center;
 						object.Distance = dist;
+						object.TintColor = fish.LeaderItemPtr ? fish.LeaderItemPtr->Model.Color : Vector4::One;
 						object.BlendMode = bucket.BlendMode;
 						object.Bucket = &bucket;
 						object.LightMode = mesh.LightMode;
@@ -720,7 +721,7 @@ namespace TEN::Renderer
 					const auto& mesh = *GetMesh(Objects[ID_FISH_EMITTER].meshIndex + fish.MeshIndex);
 
 					_stInstancedStaticMeshBuffer.StaticMeshes[0].World = Matrix::Lerp(fish.PrevTransform, fish.Transform, GetInterpolationFactor());
-					_stInstancedStaticMeshBuffer.StaticMeshes[0].Color = Vector4::One;
+					_stInstancedStaticMeshBuffer.StaticMeshes[0].Color = fish.LeaderItemPtr ? fish.LeaderItemPtr->Model.Color : Vector4::One;
 					_stInstancedStaticMeshBuffer.StaticMeshes[0].Ambient = _rooms[fish.RoomNumber].AmbientLight;
 					_stInstancedStaticMeshBuffer.StaticMeshes[0].LightMode = (int)mesh.LightMode;
 
@@ -3962,7 +3963,7 @@ namespace TEN::Renderer
 		auto world = objectInfo->World;
 		_stInstancedStaticMeshBuffer.StaticMeshes[0].World = world;
 
-		_stInstancedStaticMeshBuffer.StaticMeshes[0].Color = Vector4::One;
+		_stInstancedStaticMeshBuffer.StaticMeshes[0].Color = objectInfo->TintColor;
 		_stInstancedStaticMeshBuffer.StaticMeshes[0].Ambient = objectInfo->Room->AmbientLight;
 		_stInstancedStaticMeshBuffer.StaticMeshes[0].LightMode = (int)objectInfo->LightMode;
 		BindInstancedStaticLights(objectInfo->Room->LightsToDraw, 0);
@@ -3971,7 +3972,7 @@ namespace TEN::Renderer
 		SetBlendMode(objectInfo->BlendMode);
 		SetAlphaTest(AlphaTestMode::GreatherThan, ALPHA_TEST_THRESHOLD);
 
-		BindBucketTextures(*objectInfo->Bucket, TextureSource::Statics, objectInfo->Bucket->Animated);
+		BindBucketTextures(*objectInfo->Bucket, TextureSource::Moveables, objectInfo->Bucket->Animated);
 		BindMaterial(objectInfo->Bucket->MaterialIndex, false);
 
 		DrawIndexedInstancedTriangles((int)_sortedPolygonsIndices.size(), 1, 0, 0);
