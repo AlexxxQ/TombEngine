@@ -712,8 +712,6 @@ namespace TEN::Renderer
 				_context->IASetVertexBuffers(0, 1, _moveablesVertexBuffer.Buffer.GetAddressOf(), &stride, &offset);
 				_context->IASetIndexBuffer(_moveablesIndexBuffer.Buffer.Get(), DXGI_FORMAT_R32_UINT, 0);
 
-				const auto& moveableObj = *_moveableObjects[ID_FISH_EMITTER];
-
 				for (const auto& fish : FishSwarm)
 				{
 					if (fish.Life <= 0.0f)
@@ -724,10 +722,23 @@ namespace TEN::Renderer
 					_stInstancedStaticMeshBuffer.StaticMeshes[0].World = Matrix::Lerp(fish.PrevTransform, fish.Transform, GetInterpolationFactor());
 					_stInstancedStaticMeshBuffer.StaticMeshes[0].Color = Vector4::One;
 					_stInstancedStaticMeshBuffer.StaticMeshes[0].Ambient = _rooms[fish.RoomNumber].AmbientLight;
-					_stInstancedStaticMeshBuffer.StaticMeshes[0].LightMode = (int)moveableObj.ObjectMeshes[0]->LightMode;
+					_stInstancedStaticMeshBuffer.StaticMeshes[0].LightMode = (int)mesh.LightMode;
 
 					if (rendererPass != RendererPass::GBuffer)
-						BindInstancedStaticLights(_rooms[fish.RoomNumber].LightsToDraw, 0);
+                 {
+						auto fishLights = std::vector<RendererLight*>{};
+						CollectLights(
+							fish.Position.ToVector3(),
+							ITEM_LIGHT_COLLECTION_RADIUS,
+							fish.RoomNumber,
+							NO_VALUE,
+							false,
+							false,
+							nullptr,
+							&fishLights);
+
+						BindInstancedStaticLights(fishLights, 0);
+					}
 
 					UpdateConstantBuffer(_stInstancedStaticMeshBuffer, _cbInstancedStaticMeshBuffer);
 
