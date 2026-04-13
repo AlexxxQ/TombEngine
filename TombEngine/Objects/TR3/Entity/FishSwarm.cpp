@@ -422,7 +422,7 @@ namespace TEN::Entities::Creatures::TR3
                 fish.RoomNumber = pointColl.GetRoomNumber();
 			}
 
-         if (fish.Position.x == prevPosition.x && fish.Position.z == prevPosition.z)
+         if (fish.WallTurnTimer == 0 && fish.Position.x == prevPosition.x && fish.Position.z == prevPosition.z)
             {
 				fish.Orientation.y += ANGLE(180.0f);
 				fish.WallTurnTimer = FISH_WALL_TURN_TIME;
