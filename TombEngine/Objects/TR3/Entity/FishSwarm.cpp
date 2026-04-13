@@ -211,7 +211,7 @@ namespace TEN::Entities::Creatures::TR3
 				if (fish.Life <= 0.0f)
 					continue;
 
-              fish.MeshIndex = GetFishMeshIndexFromOcb(item.TriggerFlags);
+				fish.MeshIndex = GetFishMeshIndexFromOcb(item.TriggerFlags);
 				fish.IsLethal = (item.TriggerFlags < 0);
 				fish.RoomNumber = item.RoomNumber;
 				fish.TargetItemPtr = &g_Level.Items[item.ItemFlags[1]];	
@@ -247,6 +247,10 @@ namespace TEN::Entities::Creatures::TR3
 
 	void UpdateFishSwarm()
 	{
+		constexpr auto BUFFER					= BLOCK(0.1f);
+		constexpr auto FISH_WALL_TURN_TIME		= FPS / 2;
+		constexpr auto FISH_WALL_TURN_LERP		= 0.025f;
+		constexpr auto FISH_DEFAULT_TURN_LERP	= 0.1f;
 		constexpr auto WATER_SURFACE_OFFSET		= CLICK(0.5f);
 		constexpr auto FLEE_VEL					= 20.0f;
 		constexpr auto TARGET_REACHED_TOLERANCE = BLOCK(0.5f);
@@ -325,13 +329,16 @@ namespace TEN::Entities::Creatures::TR3
 				fish.Velocity += FISH_CATCH_UP_FACTOR; 
 
 			// Translate.
+          auto prevPosition = fish.Position;
 			auto moveDir = fish.Orientation.ToDirection();
 			moveDir.Normalize(); 
 			fish.Position += (moveDir * fish.Velocity) / enemyVel;
 			fish.Position += (moveDir * FISH_SPACING_FACTOR) / enemyVel;
 
 			auto orientTo = Geometry::GetOrientToPoint(fish.Position.ToVector3(), desiredPos.ToVector3());
-			fish.Orientation.Lerp(orientTo, 0.1f);
+          fish.Orientation.Lerp(orientTo, (fish.WallTurnTimer > 0) ? FISH_WALL_TURN_LERP : FISH_DEFAULT_TURN_LERP);
+			if (fish.WallTurnTimer > 0)
+				fish.WallTurnTimer--;
 
 			for (const auto& otherFish : FishSwarm)
 			{
@@ -393,15 +400,32 @@ namespace TEN::Entities::Creatures::TR3
 				}
 			}
 
-			auto pointColl = GetPointCollision(fish.Position, fish.RoomNumber);
-			const auto& room = g_Level.Rooms[fish.RoomNumber];
+            auto frontPoint = fish.Position.ToVector3() + (moveDir * BUFFER);
+			auto pointColl = GetPointCollision(frontPoint, fish.RoomNumber);
+
+			if (!TestEnvironment(ENV_FLAG_WATER, pointColl.GetRoomNumber()) ||
+             frontPoint.y >= (pointColl.GetFloorHeight() - BUFFER) ||
+				frontPoint.y <= (pointColl.GetWaterTopHeight() + BUFFER) ||
+				pointColl.GetSector().IsWall(frontPoint.x, frontPoint.z))
+			{
+                fish.Position = prevPosition;
+				fish.Velocity = 0.0f;
+			}
+
+			pointColl = GetPointCollision(fish.Position, fish.RoomNumber);
 
 			// Update fish room number.
 			if (pointColl.GetRoomNumber() != fish.RoomNumber && 
 				pointColl.GetRoomNumber() != NO_VALUE &&
 				TestEnvironment(ENV_FLAG_WATER, pointColl.GetRoomNumber()))
 			{
-				fish.RoomNumber = pointColl.GetRoomNumber();
+                fish.RoomNumber = pointColl.GetRoomNumber();
+			}
+
+         if (fish.Position.x == prevPosition.x && fish.Position.z == prevPosition.z)
+            {
+				fish.Orientation.y += ANGLE(180.0f);
+				fish.WallTurnTimer = FISH_WALL_TURN_TIME;
 			}
 
 			// Clamp position to slightly below water surface.
