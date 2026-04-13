@@ -4,6 +4,7 @@
 #include <chrono>
 #include <execution>
 #include <filesystem>
+#include <unordered_map>
 
 #include "ConstantBuffers/CameraMatrixBuffer.h"
 #include "Game/Animation/Animation.h"
@@ -713,55 +714,83 @@ namespace TEN::Renderer
 				_context->IASetVertexBuffers(0, 1, _moveablesVertexBuffer.Buffer.GetAddressOf(), &stride, &offset);
 				_context->IASetIndexBuffer(_moveablesIndexBuffer.Buffer.Get(), DXGI_FORMAT_R32_UINT, 0);
 
+				auto emitterLightsCache = std::unordered_map<int, std::vector<RendererLight*>>{};
+				auto fishesByMesh = std::unordered_map<int, std::vector<const FishData*>>{};
+
 				for (const auto& fish : FishSwarm)
 				{
 					if (fish.Life <= 0.0f)
 						continue;
 
-					const auto& mesh = *GetMesh(Objects[ID_FISH_EMITTER].meshIndex + fish.MeshIndex);
+					fishesByMesh[fish.MeshIndex].push_back(&fish);
+				}
 
-					_stInstancedStaticMeshBuffer.StaticMeshes[0].World = Matrix::Lerp(fish.PrevTransform, fish.Transform, GetInterpolationFactor());
-					_stInstancedStaticMeshBuffer.StaticMeshes[0].Color = fish.LeaderItemPtr ? fish.LeaderItemPtr->Model.Color : Vector4::One;
-					_stInstancedStaticMeshBuffer.StaticMeshes[0].Ambient = _rooms[fish.RoomNumber].AmbientLight;
-					_stInstancedStaticMeshBuffer.StaticMeshes[0].LightMode = (int)mesh.LightMode;
+               for (const auto& [meshIndex, fishes] : fishesByMesh)
+				{
+					const auto& mesh = *GetMesh(Objects[ID_FISH_EMITTER].meshIndex + meshIndex);
 
-					if (rendererPass != RendererPass::GBuffer)
-                 {
-						auto fishLights = std::vector<RendererLight*>{};
-						CollectLights(
-							fish.Position.ToVector3(),
-							ITEM_LIGHT_COLLECTION_RADIUS,
-							fish.RoomNumber,
-							NO_VALUE,
-							false,
-							false,
-							nullptr,
-							&fishLights);
+					for (int startIndex = 0; startIndex < fishes.size(); startIndex += INSTANCED_STATIC_MESH_BUCKET_SIZE)
+                  {
+                        int fishCount = std::min((int)fishes.size() - startIndex, INSTANCED_STATIC_MESH_BUCKET_SIZE);
 
-						BindInstancedStaticLights(fishLights, 0);
-					}
-
-					UpdateConstantBuffer(_stInstancedStaticMeshBuffer, _cbInstancedStaticMeshBuffer);
-
-					for (int animated = 0; animated < 2; animated++)
-					{
-						for (const auto& bucket : mesh.Buckets)
+						for (int i = 0; i < fishCount; i++)
 						{
-							if ((animated == 1) ^ bucket.Animated || bucket.NumVertices == 0)
-								continue;
+                          const auto& fish = *fishes[startIndex + i];
+							_stInstancedStaticMeshBuffer.StaticMeshes[i].World = Matrix::Lerp(fish.PrevTransform, fish.Transform, GetInterpolationFactor());
+							_stInstancedStaticMeshBuffer.StaticMeshes[i].Color = fish.LeaderItemPtr ? fish.LeaderItemPtr->Model.Color : Vector4::One;
+							_stInstancedStaticMeshBuffer.StaticMeshes[i].Ambient = _rooms[fish.RoomNumber].AmbientLight;
+							_stInstancedStaticMeshBuffer.StaticMeshes[i].LightMode = (int)mesh.LightMode;
 
-							BindBucketTextures(bucket, TextureSource::Moveables, animated);
-							BindMaterial(bucket.MaterialIndex, false);
-
-							int passCount = (rendererPass == RendererPass::Opaque && bucket.BlendMode == BlendMode::AlphaTest) ? 2 : 1;
-							for (int p = 0; p < passCount; p++)
+							if (rendererPass != RendererPass::GBuffer)
 							{
-								if (!SetupBlendModeAndAlphaTest(bucket.BlendMode, rendererPass, p))
-									continue;
-	
-								DrawIndexedInstancedTriangles(bucket.NumIndices, 1, bucket.StartIndex, 0);
+								int leaderIndex = fish.LeaderItemPtr ? fish.LeaderItemPtr->Index : NO_VALUE;
+								auto it = emitterLightsCache.find(leaderIndex);
 
-								_numMoveablesDrawCalls++;
+								if (it == emitterLightsCache.end())
+								{
+									auto leaderLights = std::vector<RendererLight*>{};
+									auto lightPos = fish.LeaderItemPtr ? fish.LeaderItemPtr->Pose.Position.ToVector3() : fish.Position.ToVector3();
+									int lightRoomNumber = fish.LeaderItemPtr ? fish.LeaderItemPtr->RoomNumber : fish.RoomNumber;
+
+									CollectLights(
+										lightPos,
+										ITEM_LIGHT_COLLECTION_RADIUS,
+										lightRoomNumber,
+										NO_VALUE,
+										false,
+										false,
+										nullptr,
+										&leaderLights);
+
+									it = emitterLightsCache.emplace(leaderIndex, std::move(leaderLights)).first;
+								}
+
+								BindInstancedStaticLights(it->second, i);
+							}
+						}
+
+                       UpdateConstantBuffer(_stInstancedStaticMeshBuffer, _cbInstancedStaticMeshBuffer);
+
+						for (int animated = 0; animated < 2; animated++)
+						{
+                           for (const auto& bucket : mesh.Buckets)
+							{
+                             if ((animated == 1) ^ bucket.Animated || bucket.NumVertices == 0)
+									continue;
+
+								BindBucketTextures(bucket, TextureSource::Moveables, animated);
+								BindMaterial(bucket.MaterialIndex, false);
+
+								int passCount = (rendererPass == RendererPass::Opaque && bucket.BlendMode == BlendMode::AlphaTest) ? 2 : 1;
+								for (int p = 0; p < passCount; p++)
+								{
+									if (!SetupBlendModeAndAlphaTest(bucket.BlendMode, rendererPass, p))
+										continue;
+
+									DrawIndexedInstancedTriangles(bucket.NumIndices, fishCount, bucket.StartIndex, 0);
+
+									_numMoveablesDrawCalls++;
+								}
 							}
 						}
 					}
