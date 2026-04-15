@@ -23,6 +23,8 @@ namespace TEN::Entities::Creatures::TR3
 		float Life		 = 0.0f;
 		float Undulation = 0.0f;
 		int   WallTurnTimer = 0;
+		int   StuckTimer = 0;
+		int   DisableWallAvoidTimer = 0;
 
 		ItemInfo* TargetItemPtr = nullptr;
 		ItemInfo* LeaderItemPtr = nullptr;
