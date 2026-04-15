@@ -70,6 +70,7 @@ constexpr auto LEGACY_REFLECTIONS_DOWNSCALE_FACTOR = 2.0f;
 constexpr auto MAX_ROOM_AMBIENT_MAPS = 10;
 
 constexpr auto GLOW_DOWNSCALE_FACTOR = 4.0f;
+constexpr auto SSAO_DOWNSCALE_FACTOR = 2.0f;
 constexpr auto GLOW_BLUR_SIGMA = 10.0f;
 constexpr auto GLOW_BLUR_RADIUS = 24.0f;
 constexpr auto INVENTORY_GLOW_BLUR_SIGMA = 4.0f;
