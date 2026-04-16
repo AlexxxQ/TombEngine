@@ -2434,7 +2434,7 @@ namespace TEN::Renderer
 
 			if (g_GameFlow->GetSettings()->Graphics.AmbientOcclusion && g_Configuration.EnableAmbientOcclusion && rendererPass != RendererPass::GBuffer)
 			{
-				BindRenderTargetAsTexture(TextureRegister::SSAO, &_SSAOBlurredRenderTarget, SamplerStateRegister::PointWrap);
+				BindRenderTargetAsTexture(TextureRegister::SSAO, &_SSAOBlurredRenderTarget, SamplerStateRegister::LinearClamp);
 			}
 		}
 
@@ -2608,7 +2608,7 @@ namespace TEN::Renderer
 
 			if (g_GameFlow->GetSettings()->Graphics.AmbientOcclusion && g_Configuration.EnableAmbientOcclusion && rendererPass != RendererPass::GBuffer)
 			{
-				BindRenderTargetAsTexture(TextureRegister::SSAO, &_SSAOBlurredRenderTarget, SamplerStateRegister::PointWrap);
+				BindRenderTargetAsTexture(TextureRegister::SSAO, &_SSAOBlurredRenderTarget, SamplerStateRegister::LinearClamp);
 			}
 			
 			BindRenderTargetAsTexture(TextureRegister::LegacyEnvironmentReflections, &_skyboxRenderTarget, SamplerStateRegister::AnisotropicClamp);
@@ -2694,7 +2694,7 @@ namespace TEN::Renderer
 			
 			if (g_GameFlow->GetSettings()->Graphics.AmbientOcclusion && g_Configuration.EnableAmbientOcclusion && rendererPass != RendererPass::GBuffer)
 			{
-				BindRenderTargetAsTexture(TextureRegister::SSAO, &_SSAOBlurredRenderTarget, SamplerStateRegister::PointWrap);
+				BindRenderTargetAsTexture(TextureRegister::SSAO, &_SSAOBlurredRenderTarget, SamplerStateRegister::LinearClamp);
 			}
 
 			for (auto it = view.SortedStaticsToDraw.begin(); it != view.SortedStaticsToDraw.end(); it++)
@@ -2925,7 +2925,7 @@ namespace TEN::Renderer
 
 			if (g_GameFlow->GetSettings()->Graphics.AmbientOcclusion && g_Configuration.EnableAmbientOcclusion && rendererPass != RendererPass::GBuffer)
 			{
-				BindRenderTargetAsTexture(TextureRegister::SSAO, &_SSAOBlurredRenderTarget, SamplerStateRegister::PointWrap);
+				BindRenderTargetAsTexture(TextureRegister::SSAO, &_SSAOBlurredRenderTarget, SamplerStateRegister::LinearClamp);
 			}
 
 			for (int i = (int)view.RoomsToDraw.size() - 1; i >= 0; i--)
@@ -4043,6 +4043,11 @@ namespace TEN::Renderer
 
 	void Renderer::CalculateSSAO(RenderView& view)
 	{
+        int ssaoWidth = (int)(_screenWidth / SSAO_DOWNSCALE_FACTOR);
+		int ssaoHeight = (int)(_screenHeight / SSAO_DOWNSCALE_FACTOR);
+		ssaoWidth = (ssaoWidth > 0) ? ssaoWidth : 1;
+		ssaoHeight = (ssaoHeight > 0) ? ssaoHeight : 1;
+
 		_doingFullscreenPass = true;
 
 		SetBlendMode(BlendMode::Opaque);
@@ -4058,22 +4063,22 @@ namespace TEN::Renderer
 		_context->ClearRenderTargetView(_SSAORenderTarget.RenderTargetView.Get(), Colors::White);
 		_context->OMSetRenderTargets(1, _SSAORenderTarget.RenderTargetView.GetAddressOf(), nullptr);
 
-		// Must set correctly viewport because SSAO is done at 1/4 screen resolution.
+       // Must set correctly viewport because SSAO is done at lower resolution.
 		D3D11_VIEWPORT viewport;
 		viewport.TopLeftX = 0;
 		viewport.TopLeftY = 0;
-		viewport.Width = _screenWidth;
-		viewport.Height = _screenHeight;
+      viewport.Width = (float)ssaoWidth;
+		viewport.Height = (float)ssaoHeight;
 		viewport.MinDepth = 0.0f;
 		viewport.MaxDepth = 1.0f;
 
 		_context->RSSetViewports(1, &viewport);
-	
+
 		D3D11_RECT rects[1];
 		rects[0].left = 0;
-		rects[0].right = viewport.Width;
+        rects[0].right = (LONG)viewport.Width;
 		rects[0].top = 0;
-		rects[0].bottom = viewport.Height;
+      rects[0].bottom = (LONG)viewport.Height;
 
 		_context->RSSetScissorRects(1, rects);
 
@@ -4085,12 +4090,12 @@ namespace TEN::Renderer
 
 		_context->IASetVertexBuffers(0, 1, _fullscreenTriangleVertexBuffer.Buffer.GetAddressOf(), &stride, &offset);
 
-		BindRenderTargetAsTexture(static_cast<TextureRegister>(0), &_depthRenderTarget, SamplerStateRegister::PointWrap);
-		BindRenderTargetAsTexture(static_cast<TextureRegister>(1), &_normalsAndMaterialIndexRenderTarget, SamplerStateRegister::PointWrap);
+       BindRenderTargetAsTexture(static_cast<TextureRegister>(0), &_depthRenderTarget, SamplerStateRegister::LinearClamp);
+		BindRenderTargetAsTexture(static_cast<TextureRegister>(1), &_normalsAndMaterialIndexRenderTarget, SamplerStateRegister::LinearClamp);
 		BindTexture(static_cast<TextureRegister>(2), &_SSAONoiseTexture, SamplerStateRegister::PointWrap);
 
-		_stPostProcessBuffer.ViewportSize = Vector2i(_screenWidth, _screenHeight);
-		_stPostProcessBuffer.TexelSize = Vector2(1.0f / _screenWidth, 1.0f / _screenHeight);
+      _stPostProcessBuffer.ViewportSize = Vector2i(ssaoWidth, ssaoHeight);
+		_stPostProcessBuffer.TexelSize = Vector2(1.0f / ssaoWidth, 1.0f / ssaoHeight);
 		memcpy(_stPostProcessBuffer.SSAOKernel, _SSAOKernel.data(), 16 * _SSAOKernel.size());
 		UpdateConstantBuffer(_stPostProcessBuffer, _cbPostProcessBuffer);
 
@@ -4102,8 +4107,8 @@ namespace TEN::Renderer
 		_context->ClearRenderTargetView(_SSAOBlurredRenderTarget.RenderTargetView.Get(), Colors::Black);
 		_context->OMSetRenderTargets(1, _SSAOBlurredRenderTarget.RenderTargetView.GetAddressOf(), nullptr);
 
-		BindRenderTargetAsTexture(TextureRegister::SSAO, &_SSAORenderTarget, SamplerStateRegister::PointWrap);
- 
+      BindRenderTargetAsTexture(TextureRegister::SSAO, &_SSAORenderTarget, SamplerStateRegister::LinearClamp);
+
 		DrawTriangles(3, 0);
 
 		_doingFullscreenPass = false;
