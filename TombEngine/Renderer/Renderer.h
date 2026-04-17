@@ -365,8 +365,16 @@ namespace TEN::Renderer
 
 		// SSAO
 
+		static constexpr int SSAO_DOWNSCALE_FACTOR = 2;
 		Texture2D _SSAONoiseTexture;
 		std::vector<Vector4> _SSAOKernel;
+		bool _ssaoTemporalCacheEnabled = true;
+		bool _ssaoHistoryValid = false;
+		int _ssaoReuseFrameCounter = 0;
+		int _ssaoCachedWidth = 0;
+		int _ssaoCachedHeight = 0;
+		Vector3 _ssaoLastCameraPosition = Vector3::Zero;
+		Vector3 _ssaoLastCameraDirection = Vector3::UnitZ;
 
 		// Special effects
 
