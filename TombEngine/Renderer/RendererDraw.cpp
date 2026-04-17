@@ -2434,7 +2434,7 @@ namespace TEN::Renderer
 
 			if (g_GameFlow->GetSettings()->Graphics.AmbientOcclusion && g_Configuration.EnableAmbientOcclusion && rendererPass != RendererPass::GBuffer)
 			{
-				BindRenderTargetAsTexture(TextureRegister::SSAO, &_SSAOBlurredRenderTarget, SamplerStateRegister::PointWrap);
+			BindRenderTargetAsTexture(TextureRegister::SSAO, &_SSAOBlurredRenderTarget, SamplerStateRegister::LinearClamp);
 			}
 		}
 
@@ -2608,7 +2608,7 @@ namespace TEN::Renderer
 
 			if (g_GameFlow->GetSettings()->Graphics.AmbientOcclusion && g_Configuration.EnableAmbientOcclusion && rendererPass != RendererPass::GBuffer)
 			{
-				BindRenderTargetAsTexture(TextureRegister::SSAO, &_SSAOBlurredRenderTarget, SamplerStateRegister::PointWrap);
+			BindRenderTargetAsTexture(TextureRegister::SSAO, &_SSAOBlurredRenderTarget, SamplerStateRegister::LinearClamp);
 			}
 			
 			BindRenderTargetAsTexture(TextureRegister::LegacyEnvironmentReflections, &_skyboxRenderTarget, SamplerStateRegister::AnisotropicClamp);
@@ -2694,7 +2694,7 @@ namespace TEN::Renderer
 			
 			if (g_GameFlow->GetSettings()->Graphics.AmbientOcclusion && g_Configuration.EnableAmbientOcclusion && rendererPass != RendererPass::GBuffer)
 			{
-				BindRenderTargetAsTexture(TextureRegister::SSAO, &_SSAOBlurredRenderTarget, SamplerStateRegister::PointWrap);
+			BindRenderTargetAsTexture(TextureRegister::SSAO, &_SSAOBlurredRenderTarget, SamplerStateRegister::LinearClamp);
 			}
 
 			for (auto it = view.SortedStaticsToDraw.begin(); it != view.SortedStaticsToDraw.end(); it++)
@@ -2925,7 +2925,7 @@ namespace TEN::Renderer
 
 			if (g_GameFlow->GetSettings()->Graphics.AmbientOcclusion && g_Configuration.EnableAmbientOcclusion && rendererPass != RendererPass::GBuffer)
 			{
-				BindRenderTargetAsTexture(TextureRegister::SSAO, &_SSAOBlurredRenderTarget, SamplerStateRegister::PointWrap);
+			BindRenderTargetAsTexture(TextureRegister::SSAO, &_SSAOBlurredRenderTarget, SamplerStateRegister::LinearClamp);
 			}
 
 			for (int i = (int)view.RoomsToDraw.size() - 1; i >= 0; i--)
@@ -4043,6 +4043,37 @@ namespace TEN::Renderer
 
 	void Renderer::CalculateSSAO(RenderView& view)
 	{
+		int ssaoWidth = std::max(1, _screenWidth / SSAO_DOWNSCALE_FACTOR);
+		int ssaoHeight = std::max(1, _screenHeight / SSAO_DOWNSCALE_FACTOR);
+
+		// Invalidate history if screen size changed.
+		if (_ssaoCachedWidth != _screenWidth || _ssaoCachedHeight != _screenHeight)
+		{
+			_ssaoHistoryValid = false;
+			_ssaoReuseFrameCounter = 0;
+			_ssaoCachedWidth = _screenWidth;
+			_ssaoCachedHeight = _screenHeight;
+		}
+
+		// Reuse previous AO result on stable camera to reduce SSAO cost without reducing sample count.
+		if (_ssaoTemporalCacheEnabled && _ssaoHistoryValid)
+		{
+			constexpr float CAMERA_POSITION_EPSILON = 32.0f;
+			constexpr float CAMERA_DIRECTION_DOT_EPSILON = 0.9996f;
+			constexpr int MAX_REUSE_FRAMES_STATIC = 1; // Update every 2nd frame when camera is stable.
+
+			float cameraPositionDelta = Vector3::Distance(view.Camera.WorldPosition, _ssaoLastCameraPosition);
+			float cameraDirectionDot = view.Camera.WorldDirection.Dot(_ssaoLastCameraDirection);
+			bool isCameraStable = (cameraPositionDelta < CAMERA_POSITION_EPSILON &&
+								   cameraDirectionDot > CAMERA_DIRECTION_DOT_EPSILON);
+
+			if (isCameraStable && _ssaoReuseFrameCounter < MAX_REUSE_FRAMES_STATIC)
+			{
+				_ssaoReuseFrameCounter++;
+				return;
+			}
+		}
+
 		_doingFullscreenPass = true;
 
 		SetBlendMode(BlendMode::Opaque);
@@ -4058,12 +4089,12 @@ namespace TEN::Renderer
 		_context->ClearRenderTargetView(_SSAORenderTarget.RenderTargetView.Get(), Colors::White);
 		_context->OMSetRenderTargets(1, _SSAORenderTarget.RenderTargetView.GetAddressOf(), nullptr);
 
-		// Must set correctly viewport because SSAO is done at 1/4 screen resolution.
+		// SSAO is evaluated on a dedicated half-resolution buffer.
 		D3D11_VIEWPORT viewport;
 		viewport.TopLeftX = 0;
 		viewport.TopLeftY = 0;
-		viewport.Width = _screenWidth;
-		viewport.Height = _screenHeight;
+		viewport.Width = ssaoWidth;
+		viewport.Height = ssaoHeight;
 		viewport.MinDepth = 0.0f;
 		viewport.MaxDepth = 1.0f;
 
@@ -4089,24 +4120,44 @@ namespace TEN::Renderer
 		BindRenderTargetAsTexture(static_cast<TextureRegister>(1), &_normalsAndMaterialIndexRenderTarget, SamplerStateRegister::PointWrap);
 		BindTexture(static_cast<TextureRegister>(2), &_SSAONoiseTexture, SamplerStateRegister::PointWrap);
 
-		_stPostProcessBuffer.ViewportSize = Vector2i(_screenWidth, _screenHeight);
-		_stPostProcessBuffer.TexelSize = Vector2(1.0f / _screenWidth, 1.0f / _screenHeight);
+		_stPostProcessBuffer.ViewportSize = Vector2i(ssaoWidth, ssaoHeight);
+		_stPostProcessBuffer.TexelSize = Vector2(1.0f / ssaoWidth, 1.0f / ssaoHeight);
+		// Keep the blur path in classic/performance mode.
+		_stPostProcessBuffer.BlurSigma = 0.0f;
 		memcpy(_stPostProcessBuffer.SSAOKernel, _SSAOKernel.data(), 16 * _SSAOKernel.size());
 		UpdateConstantBuffer(_stPostProcessBuffer, _cbPostProcessBuffer);
 
 		DrawTriangles(3, 0);
 
-		// Blur step.
+		// Depth-aware upsample step.
 		_shaders.Bind(Shader::SsaoBlur);
 
 		_context->ClearRenderTargetView(_SSAOBlurredRenderTarget.RenderTargetView.Get(), Colors::Black);
 		_context->OMSetRenderTargets(1, _SSAOBlurredRenderTarget.RenderTargetView.GetAddressOf(), nullptr);
 
-		BindRenderTargetAsTexture(TextureRegister::SSAO, &_SSAORenderTarget, SamplerStateRegister::PointWrap);
+		viewport.Width = _screenWidth;
+		viewport.Height = _screenHeight;
+		_context->RSSetViewports(1, &viewport);
+
+		rects[0].right = viewport.Width;
+		rects[0].bottom = viewport.Height;
+		_context->RSSetScissorRects(1, rects);
+
+		BindRenderTargetAsTexture(static_cast<TextureRegister>(0), &_depthRenderTarget, SamplerStateRegister::PointWrap);
+		BindRenderTargetAsTexture(static_cast<TextureRegister>(1), &_normalsAndMaterialIndexRenderTarget, SamplerStateRegister::PointWrap);
+		BindRenderTargetAsTexture(TextureRegister::SSAO, &_SSAORenderTarget, SamplerStateRegister::LinearClamp);
+
+		_stPostProcessBuffer.BlurSigma = 0.0f;
+		UpdateConstantBuffer(_stPostProcessBuffer, _cbPostProcessBuffer);
  
 		DrawTriangles(3, 0);
 
 		_doingFullscreenPass = false;
+
+		_ssaoHistoryValid = true;
+		_ssaoReuseFrameCounter = 0;
+		_ssaoLastCameraPosition = view.Camera.WorldPosition;
+		_ssaoLastCameraDirection = view.Camera.WorldDirection;
 	}
 
 	void Renderer::InterpolateCamera(float interpFactor)
