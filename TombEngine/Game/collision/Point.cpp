@@ -366,13 +366,15 @@ namespace TEN::Collision::Point
 
 		if (TestEnvironment(ENV_FLAG_WATER, room) || TestEnvironment(ENV_FLAG_SWAMP, room))
 		{
-			while (sector->GetNextRoomNumber(_position, false).has_value())
+			auto nextRoomNumber = sector->GetNextRoomNumber(_position, false);
+			while (nextRoomNumber.has_value())
 			{
-				room = &g_Level.Rooms[sector->GetNextRoomNumber(_position, false).value_or(sector->RoomNumber)];
+				room = &g_Level.Rooms[nextRoomNumber.value_or(sector->RoomNumber)];
 				if (!TestEnvironment(ENV_FLAG_WATER, room) && !TestEnvironment(ENV_FLAG_SWAMP, room))
 					break;
 
 				sector = Room::GetSector(room, _position.x - room->Position.x, _position.z - room->Position.z);
+				nextRoomNumber = sector->GetNextRoomNumber(_position, false);
 			}
 
 			_waterTopHeight = sector->GetSurfaceHeight(_position, false);
@@ -380,9 +382,10 @@ namespace TEN::Collision::Point
 		}
 		else
 		{
-			while (sector->GetNextRoomNumber(_position, true).has_value())
+			auto nextRoomNumber = sector->GetNextRoomNumber(_position, true);
+			while (nextRoomNumber.has_value())
 			{
-				room = &g_Level.Rooms[sector->GetNextRoomNumber(_position, true).value_or(sector->RoomNumber)];
+				room = &g_Level.Rooms[nextRoomNumber.value_or(sector->RoomNumber)];
 				if (TestEnvironment(ENV_FLAG_WATER, room) || TestEnvironment(ENV_FLAG_SWAMP, room))
 				{
 					_waterTopHeight = sector->GetSurfaceHeight(_position, true);
@@ -390,6 +393,7 @@ namespace TEN::Collision::Point
 				}
 
 				sector = Room::GetSector(room, _position.x - room->Position.x, _position.z - room->Position.z);
+				nextRoomNumber = sector->GetNextRoomNumber(_position, true);
 			}
 		}
 

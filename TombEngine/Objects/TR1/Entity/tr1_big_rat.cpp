@@ -35,6 +35,7 @@ namespace TEN::Entities::Creatures::TR1
 
 	constexpr auto BIG_RAT_RUN_TURN_RATE_MAX  = ANGLE(9.0f); // (6.0f) in OG, revert after spasm effect with velocity is implemented.
 	constexpr auto BIG_RAT_SWIM_TURN_RATE_MAX = ANGLE(4.0f); // (3.0f) in OG, revert after spasm effect with velocity is implemented.
+	constexpr auto BIG_RAT_SWIM_UNSTUCK_TURN_RATE = BIG_RAT_SWIM_TURN_RATE_MAX;
 
 	const auto BigRatBite = CreatureBiteInfo(Vector3(0, -11, 108), 3);
 	const auto BigRatAttackJoints = std::vector<unsigned int>{ 0, 1, 2, 3, 7, 8, 24, 25 };
@@ -82,9 +83,9 @@ namespace TEN::Entities::Creatures::TR1
 	}
 
 	static bool IsBigRatOnWater(ItemInfo* item)
-{
-	return (GetPointCollision(*item).GetWaterTopHeight() != NO_HEIGHT);
-}
+	{
+		return (GetPointCollision(*item).GetWaterTopHeight() != NO_HEIGHT);
+	}
 
 	static void SetBigRatWater(ItemInfo* item)
 	{
@@ -240,16 +241,20 @@ namespace TEN::Entities::Creatures::TR1
 
 		CreatureJoint(item, 0, head);
 		if (!isOnWater)
-			CreatureVault(itemNumber, angle, 2, 0); //Interpolate descent steps in dry rooms.
+		{
+			(void)CreatureVault(itemNumber, angle, 2, 0); // Interpolate descent steps in dry rooms.
+		}
 		else
+		{
 			CreatureAnimation(itemNumber, angle, 0);
+		}
 
-		//Avoid stucking at platforms on water surface.
+		// Avoid getting stuck at platforms on the water surface.
 		if (item->Animation.ActiveState == BIG_RAT_STATE_SWIM)
 		{
 			if (item->ItemFlags[0] > 0)
 			{
-				item->Pose.Orientation.y += (short)(item->ItemFlags[1] * BIG_RAT_RUN_TURN_RATE_MAX);
+				item->Pose.Orientation.y += (short)(item->ItemFlags[1] * BIG_RAT_SWIM_UNSTUCK_TURN_RATE);
 				item->ItemFlags[0]--;
 			}
 			else if (item->Pose.Position.x == prevPos.x && item->Pose.Position.z == prevPos.z)
