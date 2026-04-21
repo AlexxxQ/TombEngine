@@ -33,9 +33,9 @@ namespace TEN::Entities::Creatures::TR1
 	constexpr auto BIG_RAT_WATER_SURFACE_OFFSET = 25; // Increased to prevent the rat entering the slopes in water.
 	constexpr auto BIG_RAT_RIPPLE_RADIUS        = 128.0f;
 
-	constexpr auto BIG_RAT_RUN_TURN_RATE_MAX  = ANGLE(9.0f); // (6.0f) in OG, revert after spasm effect with velocity is implemented.
-	constexpr auto BIG_RAT_SWIM_TURN_RATE_MAX = ANGLE(4.0f); // (3.0f) in OG, revert after spasm effect with velocity is implemented.
-	constexpr auto BIG_RAT_SWIM_UNSTUCK_TURN_RATE = BIG_RAT_SWIM_TURN_RATE_MAX;
+	constexpr auto BIG_RAT_RUN_TURN_RATE_MAX      = ANGLE(9.0f); // (6.0f) in OG, revert after spasm effect with velocity is implemented.
+	constexpr auto BIG_RAT_SWIM_TURN_RATE_MAX     = ANGLE(4.0f); // (3.0f) in OG, revert after spasm effect with velocity is implemented.
+	constexpr auto BIG_RAT_SWIM_UNSTUCK_TURN_RATE = ANGLE(9.0f);
 
 	const auto BigRatBite = CreatureBiteInfo(Vector3(0, -11, 108), 3);
 	const auto BigRatAttackJoints = std::vector<unsigned int>{ 0, 1, 2, 3, 7, 8, 24, 25 };
