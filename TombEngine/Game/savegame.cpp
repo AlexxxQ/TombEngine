@@ -2566,6 +2566,11 @@ static void ParseEffects(const Save::SaveGame* s)
 		bat->Counter = batInfo->flags();
 		bat->RoomNumber = batInfo->room_number();
 		bat->Pose = ToPose(*batInfo->pose());
+
+		Matrix translation = Matrix::CreateTranslation(bat->Pose.Position.x, bat->Pose.Position.y, bat->Pose.Position.z);
+		Matrix rotation = bat->Pose.Orientation.ToRotationMatrix();
+		bat->Transform = rotation * translation;
+		bat->PrevTransform = bat->Transform;
 	}
 
 	for (int i = 0; i < s->rats()->size(); i++)
