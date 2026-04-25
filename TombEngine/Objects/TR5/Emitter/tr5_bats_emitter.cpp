@@ -295,7 +295,7 @@ void TriggerLittleBat(ItemInfo* item)
 	}
 }
 
-void UpdateTr5Bat(BatData* bat, int index, int* minDistance, int* minIndex)
+void UpdateTr5Bat(BatData* bat, int index, long long* minDistance, int* minIndex)
 {
 	if ((LaraItem->Effect.Type != EffectType::None || LaraItem->HitPoints <= 0) &&
 		bat->Counter > TR5_BAT_FLYOFF_TIMEOUT &&
@@ -327,15 +327,15 @@ void UpdateTr5Bat(BatData* bat, int index, int* minDistance, int* minIndex)
 
 	int x = LaraItem->Pose.Position.x - bat->Pose.Position.x;
 	int z = LaraItem->Pose.Position.z - bat->Pose.Position.z;
-	int distance = SQUARE(x) + SQUARE(z);
+	long long distanceSq = (long long)x * x + (long long)z * z;
 
-	if (distance < *minDistance)
+	if (distanceSq < *minDistance)
 	{
-		*minDistance = distance;
+		*minDistance = distanceSq;
 		*minIndex = index;
 	}
 
-	distance = sqrt(distance) / 8;
+	int distance = (int)(sqrt((double)distanceSq) / 8.0);
 	if (distance < 48)
 		distance = 48;
 	else if (distance > 128)
@@ -392,7 +392,10 @@ void UpdateBats()
 
 	UpdateTr3Bats();
 
-	int minDistance = INT_MAX;
+	if (!LaraItem)
+		return;
+
+	long long minDistance = INT64_MAX;
 	int minIndex = NO_VALUE;
 
 	for (int i = 0; i < NUM_BATS; i++)
