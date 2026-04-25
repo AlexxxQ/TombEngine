@@ -98,6 +98,8 @@ void ControlTr3BatsEmitter(short itemNumber, ItemInfo* item)
 
 void UpdateTr3Bat(BatData* bat, int index)
 {
+	static const Matrix tr3BatScaleMatrix = Matrix::CreateScale(TR3_BAT_SCALE);
+
 	if (!(index & 3) && !(GetRandomControl() & 7))
 		SoundEffect(SFX_TR4_BATS, &bat->Pose);
 
@@ -136,10 +138,9 @@ void UpdateTr3Bat(BatData* bat, int index)
 	EulerAngles orient = bat->Pose.Orientation;
 	orient.y -= ANGLE(90.0f);
 
-	Matrix scale = Matrix::CreateScale(TR3_BAT_SCALE);
 	Matrix translation = Matrix::CreateTranslation(bat->Pose.Position.x, bat->Pose.Position.y, bat->Pose.Position.z);
 	Matrix rotation = orient.ToRotationMatrix();
-	bat->Transform = scale * rotation * translation;
+	bat->Transform = tr3BatScaleMatrix * rotation * translation;
 }
 
 void UpdateTr3Bats()
@@ -295,9 +296,9 @@ void TriggerLittleBat(ItemInfo* item)
 	}
 }
 
-void UpdateTr5Bat(BatData* bat, int index, long long* minDistance, int* minIndex)
+void UpdateTr5Bat(BatData* bat, int index, const Vector3i* laraPos, EffectType laraEffectType, long long* minDistance, int* minIndex)
 {
-	if ((LaraItem->Effect.Type != EffectType::None || LaraItem->HitPoints <= 0) &&
+	if ((laraEffectType != EffectType::None || LaraItem->HitPoints <= 0) &&
 		bat->Counter > TR5_BAT_FLYOFF_TIMEOUT &&
 		!(GetRandomControl() & 7))
 	{
@@ -320,13 +321,13 @@ void UpdateTr5Bat(BatData* bat, int index, long long* minDistance, int* minIndex
 	auto angles = Geometry::GetOrientToPoint(
 		bat->Pose.Position.ToVector3(),
 		Vector3(
-			LaraItem->Pose.Position.x + bat->XTarget * 8,
-			LaraItem->Pose.Position.y - bat->LaraTarget,
-			LaraItem->Pose.Position.z + bat->ZTarget * 8
+			laraPos->x + bat->XTarget * 8,
+			laraPos->y - bat->LaraTarget,
+			laraPos->z + bat->ZTarget * 8
 		));
 
-	int x = LaraItem->Pose.Position.x - bat->Pose.Position.x;
-	int z = LaraItem->Pose.Position.z - bat->Pose.Position.z;
+	int x = laraPos->x - bat->Pose.Position.x;
+	int z = laraPos->z - bat->Pose.Position.z;
 	long long distanceSq = (long long)x * x + (long long)z * z;
 
 	if (distanceSq < *minDistance)
@@ -395,6 +396,9 @@ void UpdateBats()
 	if (!LaraItem)
 		return;
 
+	const Vector3i laraPos = LaraItem->Pose.Position;
+	EffectType laraEffectType = LaraItem->Effect.Type;
+
 	long long minDistance = INT64_MAX;
 	int minIndex = NO_VALUE;
 
@@ -406,7 +410,7 @@ void UpdateBats()
 			continue;
 
 		bat->StoreInterpolationData();
-		UpdateTr5Bat(bat, i, &minDistance, &minIndex);
+		UpdateTr5Bat(bat, i, &laraPos, laraEffectType, &minDistance, &minIndex);
 	}
 
 	if (minIndex != NO_VALUE)
