@@ -298,6 +298,7 @@ namespace TEN::Renderer
 		SAFE_DELETE(_normalsAndMaterialIndexRenderTarget);
 		SAFE_DELETE(_emissiveAndRoughnessRenderTarget);
 		SAFE_DELETE(_SSAORenderTarget);
+		SAFE_DELETE(_SSAOBlurIntermediateRenderTarget);
 		SAFE_DELETE(_SSAOBlurredRenderTarget);
 		SAFE_DELETE(_glowRenderTarget[0]);
 		SAFE_DELETE(_glowRenderTarget[1]);
@@ -323,8 +324,17 @@ namespace TEN::Renderer
 		_normalsAndMaterialIndexRenderTarget = _graphicsDevice->CreateRenderSurface2D(w, h, SurfaceFormat::SF_RGBA8_Unorm, false, DepthFormat::None);
 		_emissiveAndRoughnessRenderTarget = _graphicsDevice->CreateRenderSurface2D(w, h, SurfaceFormat::SF_RGBA8_Unorm, false, DepthFormat::None);
 		
-		_SSAORenderTarget = _graphicsDevice->CreateRenderSurface2D(w, h, SurfaceFormat::SF_RGBA8_Unorm, false, DepthFormat::None);
-		_SSAOBlurredRenderTarget = _graphicsDevice->CreateRenderSurface2D(w, h, SurfaceFormat::SF_RGBA8_Unorm, false, DepthFormat::None);
+		_SSAORenderTarget = _graphicsDevice->CreateRenderSurface2D(w, h, SurfaceFormat::SF_R8_Unorm, false, DepthFormat::None);
+		_SSAOBlurIntermediateRenderTarget = _graphicsDevice->CreateRenderSurface2D(w, h, SurfaceFormat::SF_R8_Unorm, false, DepthFormat::None);
+		_SSAOBlurredRenderTarget = _graphicsDevice->CreateRenderSurface2D(w, h, SurfaceFormat::SF_R8_Unorm, false, DepthFormat::None);
+		_ssaoHistoryValid = false;
+		_ssaoHasLastLaraPosition = false;
+		_ssaoReuseFrameCounter = 0;
+		_ssaoCachedWidth = w;
+		_ssaoCachedHeight = h;
+		_ssaoLastRoomNumber = NO_VALUE;
+		_ssaoLastVisibleRoomSignature = 0;
+		_ssaoLastFOV = 0.0f;
 		
 		_glowRenderTarget[0] = _graphicsDevice->CreateRenderSurface2D(w / GLOW_DOWNSCALE_FACTOR, h / GLOW_DOWNSCALE_FACTOR, SurfaceFormat::SF_RGBA8_Unorm, false, DepthFormat::None);
 		_glowRenderTarget[1] = _graphicsDevice->CreateRenderSurface2D(w / GLOW_DOWNSCALE_FACTOR, h / GLOW_DOWNSCALE_FACTOR, SurfaceFormat::SF_RGBA8_Unorm, false, DepthFormat::None);
