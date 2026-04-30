@@ -46,6 +46,22 @@ extern GUNSHELL_STRUCT Gunshells[MAX_GUNSHELL];
 
 namespace TEN::Renderer
 {
+	unsigned int Renderer::GetSSAOVisibleRoomSignature(RenderView& view) const
+	{
+		unsigned int signature = 2166136261u;
+
+		for (const auto* room : view.RoomsToDraw)
+		{
+			signature ^= (unsigned short)room->RoomNumber;
+			signature *= 16777619u;
+		}
+
+		signature ^= (unsigned int)view.RoomsToDraw.size();
+		signature *= 16777619u;
+
+		return signature;
+	}
+
 	void Renderer::RenderBlobShadows(RenderView& renderView)
 	{
 		auto nearestSpheres = std::vector<Sphere>{};
@@ -2616,7 +2632,7 @@ namespace TEN::Renderer
 
 			if (g_GameFlow->GetSettings()->Graphics.AmbientOcclusion && g_Configuration.EnableAmbientOcclusion && rendererPass != RendererPass::GBuffer)
 			{
-				BindRenderTargetAsTexture(TextureRegister::SSAO, &_SSAOBlurredRenderTarget, SamplerStateRegister::PointWrap);
+				BindRenderTargetAsTexture(TextureRegister::SSAO, _SSAOBlurredRenderTarget->GetRenderTarget(), SamplerStateRegister::PointWrap);
 			}
 			
 			BindRenderTargetAsTexture(TextureRegister::LegacyEnvironmentReflections, &_skyboxRenderTarget, SamplerStateRegister::AnisotropicClamp);
@@ -4030,6 +4046,61 @@ namespace TEN::Renderer
 
 	void Renderer::CalculateSSAO(RenderView& view)
 	{
+		const auto screenWidth = _graphicsDevice->GetScreenWidth();
+		const auto screenHeight = _graphicsDevice->GetScreenHeight();
+
+		if (_ssaoCachedWidth != screenWidth || _ssaoCachedHeight != screenHeight)
+		{
+			_ssaoHistoryValid = false;
+			_ssaoHasLastLaraPosition = false;
+			_ssaoReuseFrameCounter = 0;
+			_ssaoCachedWidth = screenWidth;
+			_ssaoCachedHeight = screenHeight;
+		}
+
+		bool ssaoHistoryStable = false;
+		auto visibleRoomSignature = GetSSAOVisibleRoomSignature(view);
+
+		if (_ssaoHistoryValid)
+		{
+			constexpr auto CAMERA_POSITION_EPSILON = EPSILON;
+			constexpr auto CAMERA_DIRECTION_EPSILON = EPSILON;
+			constexpr auto LARA_POSITION_EPSILON = 4.0f;
+			constexpr auto FOV_EPSILON = 0.001f;
+
+			auto cameraPositionDelta = Vector3::Distance(view.Camera.WorldPosition, _ssaoLastCameraPosition);
+			auto cameraDirectionDelta = Vector3::Distance(view.Camera.WorldDirection, _ssaoLastCameraDirection);
+			bool isCameraStable = (cameraPositionDelta <= CAMERA_POSITION_EPSILON &&
+								   cameraDirectionDelta <= CAMERA_DIRECTION_EPSILON &&
+								   view.Camera.RoomNumber == _ssaoLastRoomNumber &&
+								   visibleRoomSignature == _ssaoLastVisibleRoomSignature &&
+								   abs(view.Camera.FOV - _ssaoLastFOV) < FOV_EPSILON);
+			bool isLaraStable = true;
+
+			if (LaraItem != nullptr)
+			{
+				auto laraPosition = LaraItem->Pose.Position.ToVector3();
+
+				if (!_ssaoHasLastLaraPosition)
+					isLaraStable = false;
+				else
+					isLaraStable = (Vector3::Distance(laraPosition, _ssaoLastLaraPosition) < LARA_POSITION_EPSILON);
+			}
+
+			ssaoHistoryStable = isCameraStable && isLaraStable;
+		}
+
+		if (_ssaoTemporalCacheEnabled && ssaoHistoryStable)
+		{
+			constexpr int MAX_REUSE_FRAMES_STATIC = 1;
+
+			if (_ssaoReuseFrameCounter < MAX_REUSE_FRAMES_STATIC)
+			{
+				_ssaoReuseFrameCounter++;
+				return;
+			}
+		}
+
 		_doingFullscreenPass = true;
 
 		SetBlendMode(BlendMode::Opaque);
@@ -4046,7 +4117,7 @@ namespace TEN::Renderer
 		_graphicsDevice->BindRenderTarget(_SSAORenderTarget->GetRenderTarget(), nullptr);
 
 		// Must set correctly viewport because SSAO is done at 1/4 screen resolution.
-		RendererViewport viewport = { 0, 0, _graphicsDevice->GetScreenWidth(), _graphicsDevice->GetScreenHeight(), 0.0f, 1.0f };
+		RendererViewport viewport = { 0, 0, screenWidth, screenHeight, 0.0f, 1.0f };
 		_graphicsDevice->SetViewport(viewport);
 		_graphicsDevice->SetScissor(viewport);
 	
@@ -4055,12 +4126,12 @@ namespace TEN::Renderer
 
 		_graphicsDevice->BindVertexBuffer(_fullscreenTriangleVertexBuffer.get());
 
-		BindRenderTargetAsTexture(static_cast<TextureRegister>(0), _depthRenderTarget->GetRenderTarget(), SamplerStateRegister::PointWrap);
-		BindRenderTargetAsTexture(static_cast<TextureRegister>(1), _normalsAndMaterialIndexRenderTarget->GetRenderTarget(), SamplerStateRegister::PointWrap);
+		BindRenderTargetAsTexture(static_cast<TextureRegister>(0), _depthRenderTarget->GetRenderTarget(), SamplerStateRegister::LinearClamp);
+		BindRenderTargetAsTexture(static_cast<TextureRegister>(1), _normalsAndMaterialIndexRenderTarget->GetRenderTarget(), SamplerStateRegister::LinearClamp);
 		BindTexture(static_cast<TextureRegister>(2), _SSAONoiseTexture.get(), SamplerStateRegister::PointWrap);
 
-		_stPostProcessBuffer.ViewportSize = Vector2i(_graphicsDevice->GetScreenWidth(), _graphicsDevice->GetScreenHeight());
-		_stPostProcessBuffer.TexelSize = Vector2(1.0f / _graphicsDevice->GetScreenWidth(), 1.0f /  _graphicsDevice->GetScreenHeight());
+		_stPostProcessBuffer.ViewportSize = Vector2i(screenWidth, screenHeight);
+		_stPostProcessBuffer.TexelSize = Vector2(1.0f / screenWidth, 1.0f / screenHeight);
 		memcpy(_stPostProcessBuffer.SSAOKernel, _SSAOKernel.data(), 16 * _SSAOKernel.size());
 		UpdateConstantBuffer(&_stPostProcessBuffer, _cbPostProcessBuffer.get());
 
@@ -4069,12 +4140,47 @@ namespace TEN::Renderer
 		// Blur step.
 		_shaders.Bind(Shader::SsaoBlur);
 
+		_stPostProcessBuffer.BlurDirection = Vector2(1.0f, 0.0f);
+		UpdateConstantBuffer(&_stPostProcessBuffer, _cbPostProcessBuffer.get());
+
+		_graphicsDevice->ClearRenderTarget2D(_SSAOBlurIntermediateRenderTarget->GetRenderTarget(), Colors::Black);
+		_graphicsDevice->BindRenderTarget(_SSAOBlurIntermediateRenderTarget->GetRenderTarget(), nullptr);
+
+		BindRenderTargetAsTexture(static_cast<TextureRegister>(0), _depthRenderTarget->GetRenderTarget(), SamplerStateRegister::LinearClamp);
+		BindRenderTargetAsTexture(static_cast<TextureRegister>(1), _normalsAndMaterialIndexRenderTarget->GetRenderTarget(), SamplerStateRegister::LinearClamp);
+		BindRenderTargetAsTexture(TextureRegister::SSAO, _SSAORenderTarget->GetRenderTarget(), SamplerStateRegister::LinearClamp);
+
+		DrawTriangles(3, 0);
+
+		_stPostProcessBuffer.BlurDirection = Vector2(0.0f, 1.0f);
+		UpdateConstantBuffer(&_stPostProcessBuffer, _cbPostProcessBuffer.get());
+
 		_graphicsDevice->ClearRenderTarget2D(_SSAOBlurredRenderTarget->GetRenderTarget(), Colors::Black);
 		_graphicsDevice->BindRenderTarget(_SSAOBlurredRenderTarget->GetRenderTarget(), nullptr);
 
-		BindRenderTargetAsTexture(TextureRegister::SSAO, _SSAORenderTarget->GetRenderTarget(), SamplerStateRegister::PointWrap);
- 
+		BindRenderTargetAsTexture(static_cast<TextureRegister>(0), _depthRenderTarget->GetRenderTarget(), SamplerStateRegister::LinearClamp);
+		BindRenderTargetAsTexture(static_cast<TextureRegister>(1), _normalsAndMaterialIndexRenderTarget->GetRenderTarget(), SamplerStateRegister::LinearClamp);
+		BindRenderTargetAsTexture(TextureRegister::SSAO, _SSAOBlurIntermediateRenderTarget->GetRenderTarget(), SamplerStateRegister::LinearClamp);
+
 		DrawTriangles(3, 0);
+
+		_ssaoHistoryValid = true;
+		_ssaoReuseFrameCounter = 0;
+		_ssaoLastCameraPosition = view.Camera.WorldPosition;
+		_ssaoLastCameraDirection = view.Camera.WorldDirection;
+		_ssaoLastRoomNumber = view.Camera.RoomNumber;
+		_ssaoLastVisibleRoomSignature = visibleRoomSignature;
+		_ssaoLastFOV = view.Camera.FOV;
+
+		if (LaraItem != nullptr)
+		{
+			_ssaoLastLaraPosition = LaraItem->Pose.Position.ToVector3();
+			_ssaoHasLastLaraPosition = true;
+		}
+		else
+		{
+			_ssaoHasLastLaraPosition = false;
+		}
 
 		_doingFullscreenPass = false;
 	}
