@@ -104,6 +104,7 @@ namespace TEN::Renderer
 		std::unique_ptr<IRenderSurface2D> _shadowMap;
 		std::unique_ptr<IRenderSurface2D> _legacyReflectionsRenderTarget;
 		std::unique_ptr<IRenderSurface2D> _SSAORenderTarget;
+		std::unique_ptr<IRenderSurface2D> _SSAOBlurIntermediateRenderTarget;
 		std::unique_ptr<IRenderSurface2D> _SSAOBlurredRenderTarget;
 		std::unique_ptr<IRenderSurface2D> _SMAASceneRenderTarget;
 		std::unique_ptr<IRenderSurface2D> _SMAASceneSRGBRenderTarget;
@@ -311,6 +312,18 @@ namespace TEN::Renderer
 
 		std::unique_ptr<ITexture2D> _SSAONoiseTexture;
 		std::vector<Vector4> _SSAOKernel;
+		bool _ssaoTemporalCacheEnabled = true;
+		bool _ssaoHistoryValid = false;
+		bool _ssaoHasLastLaraPosition = false;
+		int _ssaoReuseFrameCounter = 0;
+		int _ssaoCachedWidth = 0;
+		int _ssaoCachedHeight = 0;
+		int _ssaoLastRoomNumber = NO_VALUE;
+		unsigned int _ssaoLastVisibleRoomSignature = 0;
+		float _ssaoLastFOV = 0.0f;
+		Vector3 _ssaoLastCameraPosition = Vector3::Zero;
+		Vector3 _ssaoLastCameraDirection = Vector3::UnitZ;
+		Vector3 _ssaoLastLaraPosition = Vector3::Zero;
 
 		// Special effects
 		RendererMirror* _currentMirror = nullptr;
@@ -363,6 +376,7 @@ namespace TEN::Renderer
 		void CalculateLightFades(RendererItem* item);
 		void CollectDecalsForRoom(short roomNumber, RenderView& renderView);
 		void CollectEffects(short roomNumber);
+		unsigned int GetSSAOVisibleRoomSignature(RenderView& view) const;
 		void ClearShadowMap();
 		void CalculateSSAO(RenderView& view);
 		void UpdateItemAnimations(RenderView& view);
