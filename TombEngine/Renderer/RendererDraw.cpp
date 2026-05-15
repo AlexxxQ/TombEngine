@@ -46,6 +46,11 @@ extern GUNSHELL_STRUCT Gunshells[MAX_GUNSHELL];
 
 namespace TEN::Renderer
 {
+	constexpr auto MONKEY_CARRY_BONE = 8;
+	constexpr auto MONKEY_CARRY_OFFSET_Y = 32.0f;
+	constexpr auto MONKEY_CARRY_OFFSET_Z = 64.0f;
+	constexpr auto MONKEY_CARRY_ROTATION_Y = 90.0f;
+
 	void Renderer::RenderBlobShadows(RenderView& renderView)
 	{
 		auto nearestSpheres = std::vector<Sphere>{};
@@ -2612,6 +2617,86 @@ namespace TEN::Renderer
 
 			DrawMesh(item, GetMesh(item->MeshIndex[k]), RendererObjectType::Moveable, k, false, view, rendererPass);
 		}
+
+		DrawMonkeyCarriedItem(item, nativeItem, view, rendererPass);
+	}
+
+	void Renderer::DrawMonkeyCarriedItem(RendererItem* item, ItemInfo* nativeItem, RenderView& view, RendererPass rendererPass)
+	{
+		if (rendererPass == RendererPass::CollectTransparentFaces)
+			return;
+
+		if (nativeItem->ObjectNumber != ID_MONKEY || nativeItem->CarriedItem == NO_VALUE)
+			return;
+
+		if (nativeItem->CarriedItem < 0 || nativeItem->CarriedItem >= g_Level.NumItems)
+			return;
+
+		auto* carriedItem = &g_Level.Items[nativeItem->CarriedItem];
+		auto& carriedObject = Objects[carriedItem->ObjectNumber];
+
+		if (!carriedObject.loaded || !carriedObject.isPickup)
+			return;
+
+		if (carriedItem->Model.MeshIndex.empty() || !_moveableObjects[carriedItem->ObjectNumber])
+			return;
+
+		auto attachedItem = RendererItem();
+		attachedItem.ItemNumber = carriedItem->Index;
+		attachedItem.ObjectID = carriedItem->ObjectNumber;
+		attachedItem.RoomNumber = item->RoomNumber;
+		attachedItem.PrevRoomNumber = item->PrevRoomNumber;
+		attachedItem.Color = carriedItem->Model.Color;
+		attachedItem.AmbientLight = item->AmbientLight;
+		attachedItem.LightFade = item->LightFade;
+		attachedItem.LightsToDraw = item->LightsToDraw;
+		attachedItem.MeshIndex = carriedItem->Model.MeshIndex;
+		attachedItem.SkinIndex = carriedItem->Model.SkinIndex;
+		auto carryOffset = Matrix::CreateTranslation(0.0f, MONKEY_CARRY_OFFSET_Y, MONKEY_CARRY_OFFSET_Z);
+		auto carryRotation = Matrix::CreateRotationY(TO_RAD(ANGLE(MONKEY_CARRY_ROTATION_Y)));
+
+		attachedItem.InterpolatedWorld = carryRotation * carryOffset * item->InterpolatedAnimTransforms[MONKEY_CARRY_BONE] * item->InterpolatedWorld;
+		attachedItem.World = attachedItem.InterpolatedWorld;
+
+		for (int i = 0; i < MAX_BONES; i++)
+		{
+			attachedItem.AnimTransforms[i] = Matrix::Identity;
+			attachedItem.InterpolatedAnimTransforms[i] = Matrix::Identity;
+		}
+
+		if (!carriedObject.Animations.empty())
+		{
+			auto interpData = KeyframeInterpolationData(
+				GetAnimData(carriedObject, 0).Keyframes[0],
+				GetAnimData(carriedObject, 0).Keyframes[0],
+				0.0f);
+			UpdateAnimation(&attachedItem, *_moveableObjects[carriedItem->ObjectNumber], interpData, UINT_MAX);
+
+			for (int i = 0; i < MAX_BONES; i++)
+				attachedItem.InterpolatedAnimTransforms[i] = attachedItem.AnimTransforms[i];
+		}
+
+		_stObjects.Objects[0].World = attachedItem.InterpolatedWorld;
+		ReflectMatrixOptionally(_stObjects.Objects[0].World);
+
+		_stObjects.Objects[0].Color = attachedItem.Color;
+		_stObjects.Objects[0].AmbientLight = attachedItem.AmbientLight;
+		_stObjects.Skinned = (int)SkinningMode::None;
+
+		for (int i = 0; i < MAX_BONES; i++)
+		{
+			_stObjects.Bones[i] = attachedItem.InterpolatedAnimTransforms[i];
+			_stObjects.BoneLightModes[i] = 0;
+		}
+
+		for (int i = 0; i < attachedItem.MeshIndex.size() && i < MAX_BONES; i++)
+			_stObjects.BoneLightModes[i] = (int)GetMesh(attachedItem.MeshIndex[i])->LightMode;
+
+		BindMoveableLights(attachedItem.LightsToDraw, attachedItem.RoomNumber, attachedItem.PrevRoomNumber, attachedItem.LightFade, false);
+		UpdateConstantBuffer(&_stObjects, _cbObjects.get());
+
+		for (int i = 0; i < attachedItem.MeshIndex.size(); i++)
+			DrawMesh(&attachedItem, GetMesh(attachedItem.MeshIndex[i]), RendererObjectType::Moveable, i, false, view, rendererPass);
 	}
 
 	void Renderer::DrawStatics(RenderView& view, RendererPass rendererPass)
