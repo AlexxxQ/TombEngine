@@ -20,6 +20,7 @@ namespace TEN::Entities::Creatures::TR3
 	// TODO: Work out damage constants.
 	constexpr auto MONKEY_SWIPE_ATTACK_PLAYER_DAMAGE = 40;
 	constexpr auto MONKEY_SWIPE_ATTACK_CREATURE_DAMAGE = 20;
+	constexpr auto MONKEY_PICKUP_FRAME = 12;
 
 	// TODO: Range constants.
 
@@ -85,6 +86,58 @@ namespace TEN::Entities::Creatures::TR3
 		MONKEY_ANIM_WALK_FORWARD_TO_IDLE = 30
 	};
 
+	bool IsMonkeyPickupTarget(ItemInfo* target, GAME_OBJECT_ID objectNumber, CreatureInfo* creature)
+	{
+		if (objectNumber != ID_NO_OBJECT && target->ObjectNumber != objectNumber)
+			return false;
+
+		if (objectNumber == ID_NO_OBJECT && !Objects[target->ObjectNumber].isPickup)
+			return false;
+
+		if (target->RoomNumber == NO_VALUE || target->AIBits)
+			return false;
+
+		if (target->Status == ITEM_INVISIBLE || target->Flags & IFLAG_CLEAR_BODY)
+			return false;
+
+		return SameZone(creature, target);
+	}
+
+	void UpdateMonkeyPickupTarget(ItemInfo* item, CreatureInfo* creature)
+	{
+		if (item->CarriedItem != NO_VALUE)
+			return;
+
+		auto targetObjectNumber = (item->AIBits == MODIFY) ? ID_KEY_ITEM4 : ID_NO_OBJECT;
+
+		if (creature->Enemy && IsMonkeyPickupTarget(creature->Enemy, targetObjectNumber, creature))
+			return;
+
+		auto* bestTarget = (ItemInfo*)nullptr;
+		auto bestDistance = INT_MAX;
+
+		for (int i = 0; i < g_Level.NumItems; i++)
+		{
+			auto* target = &g_Level.Items[i];
+
+			if (IsMonkeyPickupTarget(target, targetObjectNumber, creature))
+			{
+				auto x = target->Pose.Position.x - item->Pose.Position.x;
+				auto z = target->Pose.Position.z - item->Pose.Position.z;
+				auto distance = SQUARE(x) + SQUARE(z);
+
+				if (distance < bestDistance)
+				{
+					bestTarget = target;
+					bestDistance = distance;
+				}
+			}
+		}
+
+		if (bestTarget)
+			creature->Enemy = bestTarget;
+	}
+
 	void InitializeMonkey(short itemNumber)
 	{
 		auto* item = &g_Level.Items[itemNumber];
@@ -110,6 +163,7 @@ namespace TEN::Entities::Creatures::TR3
 		{
 			if (item->Animation.ActiveState != MONKEY_STATE_DEATH)
 			{
+				item->ResetModelToDefault();
 				SetAnimation(item, MONKEY_ANIM_DEATH);
 				item->MeshBits = ALL_JOINT_BITS;
 			}
@@ -121,50 +175,10 @@ namespace TEN::Entities::Creatures::TR3
 			if (creature->HurtByLara)
 				creature->Enemy = LaraItem;
 			else
-			{
-				creature->Enemy = nullptr;
-				int minDistance = INT_MAX;
+				UpdateMonkeyPickupTarget(item, creature);
 
-				for (auto creatureIndex : ActiveCreatures)
-				{
-					auto* currentCreature = GetCreatureInfo(&g_Level.Items[creatureIndex]);
-
-					if (currentCreature->ItemNumber == NO_VALUE || currentCreature->ItemNumber == itemNumber)
-						continue;
-
-					auto* target = &g_Level.Items[currentCreature->ItemNumber];
-					if (target->ObjectNumber == ID_LARA || target->ObjectNumber == ID_MONKEY)
-						continue;
-
-					if (target->ObjectNumber == ID_SMALLMEDI_ITEM)
-					{
-						int x = target->Pose.Position.x - item->Pose.Position.x;
-						int z = target->Pose.Position.z - item->Pose.Position.z;
-						int distance = pow(x, 2) + pow(z, 2);
-
-						if (distance < minDistance)
-						{
-							creature->Enemy = target;
-							minDistance = distance;
-						}
-					}
-				}
-			}
-
-			if (item->AIBits != MODIFY)
-			{
-				if (item->CarriedItem != NO_VALUE)
-					item->MeshBits = 0xFFFFFEFF;
-				else
-					item->MeshBits = ALL_JOINT_BITS;
-			}
-			else
-			{
-				if (item->CarriedItem != NO_VALUE)
-					item->MeshBits = 0xFFFF6E6F;
-				else
-					item->MeshBits = 0xFFFF6F6F;
-			}
+			item->ResetModelToDefault();
+			item->MeshBits = ALL_JOINT_BITS;
 
 			AI_INFO AI;
 			CreatureAIInfo(item, &AI);
@@ -186,7 +200,7 @@ namespace TEN::Entities::Creatures::TR3
 				int dx = LaraItem->Pose.Position.x - item->Pose.Position.x;
 				int dz = LaraItem->Pose.Position.z - item->Pose.Position.z;
 
-				laraAI.angle = phd_atan(dz, dz) - item->Pose.Orientation.y;
+				laraAI.angle = phd_atan(dz, dx) - item->Pose.Orientation.y;
 				laraAI.distance = pow(dx, 2) + pow(dz, 2);
 			}
 
@@ -328,7 +342,7 @@ namespace TEN::Entities::Creatures::TR3
 				else if (AI.bite && AI.distance < pow(682, 2))
 					item->Animation.TargetState = MONKEY_STATE_WALK_FORWARD;
 				else if (AI.distance < pow(682, 2) &&
-					!creature->Enemy->IsLara() && creature->Enemy != nullptr &&
+					creature->Enemy != nullptr && !creature->Enemy->IsLara() &&
 					creature->Enemy->ObjectNumber != ID_AI_PATROL1 &&
 					creature->Enemy->ObjectNumber != ID_AI_PATROL2 &&
 					abs(item->Pose.Position.y - creature->Enemy->Pose.Position.y) < CLICK(1))
@@ -347,13 +361,13 @@ namespace TEN::Entities::Creatures::TR3
 
 				if (creature->Enemy == nullptr)
 					break;
-				else if ((creature->Enemy->ObjectNumber == ID_SMALLMEDI_ITEM ||
-					creature->Enemy->ObjectNumber == ID_KEY_ITEM4) &&
-					item->Animation.FrameNumber == 12)
+				else if (((item->AIBits == MODIFY && creature->Enemy->ObjectNumber == ID_KEY_ITEM4) ||
+					(item->AIBits != MODIFY && Objects[creature->Enemy->ObjectNumber].isPickup)) &&
+					item->Animation.FrameNumber == MONKEY_PICKUP_FRAME)
 				{
 					if (creature->Enemy->RoomNumber == NO_VALUE ||
 						creature->Enemy->Status == ITEM_INVISIBLE ||
-						creature->Enemy->Flags & -32768)
+						creature->Enemy->Flags & IFLAG_CLEAR_BODY)
 					{
 						creature->Enemy = nullptr;
 					}
@@ -386,7 +400,8 @@ namespace TEN::Entities::Creatures::TR3
 					}
 				}
 				else if (creature->Enemy->ObjectNumber == ID_AI_AMBUSH &&
-					item->Animation.FrameNumber == 12)
+					item->Animation.FrameNumber == MONKEY_PICKUP_FRAME &&
+					item->CarriedItem != NO_VALUE)
 				{
 					item->AIBits = 0;
 
