@@ -86,12 +86,9 @@ namespace TEN::Entities::Creatures::TR3
 		MONKEY_ANIM_WALK_FORWARD_TO_IDLE = 30
 	};
 
-	bool IsMonkeyPickupTarget(ItemInfo* target, GAME_OBJECT_ID objectNumber, CreatureInfo* creature)
+	bool IsMonkeyPickupTarget(ItemInfo* target, CreatureInfo* creature)
 	{
-		if (objectNumber != ID_NO_OBJECT && target->ObjectNumber != objectNumber)
-			return false;
-
-		if (objectNumber == ID_NO_OBJECT && !Objects[target->ObjectNumber].isPickup)
+		if (!Objects[target->ObjectNumber].isPickup)
 			return false;
 
 		if (target->RoomNumber == NO_VALUE || target->AIBits)
@@ -103,14 +100,21 @@ namespace TEN::Entities::Creatures::TR3
 		return SameZone(creature, target);
 	}
 
+	bool IsMonkeyPickupInSameBox(ItemInfo* item, CreatureInfo* creature)
+	{
+		auto* enemy = creature->Enemy;
+		if (enemy == nullptr)
+			return false;
+
+		return item->BoxNumber == enemy->BoxNumber;
+	}
+
 	void UpdateMonkeyPickupTarget(ItemInfo* item, CreatureInfo* creature)
 	{
 		if (item->CarriedItem != NO_VALUE)
 			return;
 
-		auto targetObjectNumber = (item->AIBits == MODIFY) ? ID_KEY_ITEM4 : ID_NO_OBJECT;
-
-		if (creature->Enemy && IsMonkeyPickupTarget(creature->Enemy, targetObjectNumber, creature))
+		if (creature->Enemy && IsMonkeyPickupTarget(creature->Enemy, creature))
 			return;
 
 		auto* bestTarget = (ItemInfo*)nullptr;
@@ -120,7 +124,7 @@ namespace TEN::Entities::Creatures::TR3
 		{
 			auto* target = &g_Level.Items[i];
 
-			if (IsMonkeyPickupTarget(target, targetObjectNumber, creature))
+			if (IsMonkeyPickupTarget(target, creature))
 			{
 				auto x = target->Pose.Position.x - item->Pose.Position.x;
 				auto z = target->Pose.Position.z - item->Pose.Position.z;
@@ -361,8 +365,7 @@ namespace TEN::Entities::Creatures::TR3
 
 				if (creature->Enemy == nullptr)
 					break;
-				else if (((item->AIBits == MODIFY && creature->Enemy->ObjectNumber == ID_KEY_ITEM4) ||
-					(item->AIBits != MODIFY && Objects[creature->Enemy->ObjectNumber].isPickup)) &&
+				else if (Objects[creature->Enemy->ObjectNumber].isPickup &&
 					item->Animation.FrameNumber == MONKEY_PICKUP_FRAME)
 				{
 					if (creature->Enemy->RoomNumber == NO_VALUE ||
@@ -445,9 +448,11 @@ namespace TEN::Entities::Creatures::TR3
 					if (Random::TestProbability(1 / 128.0f))
 						item->Animation.TargetState = MONKEY_STATE_SIT;
 				}
+				else if (IsMonkeyPickupInSameBox(item, creature))
+					item->Animation.TargetState = MONKEY_STATE_IDLE;
 				else if (AI.bite && AI.distance < pow(682, 2))
 					item->Animation.TargetState = MONKEY_STATE_IDLE;
-				
+
 				break;
 
 			case MONKEY_STATE_RUN_FORWARD:
