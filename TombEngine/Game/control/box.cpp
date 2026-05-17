@@ -903,6 +903,15 @@ bool CreaturePathfind(ItemInfo* item, Vector3i prevPos, short angle, short tilt)
 		else
 			item->Pose.Orientation.y += BIFF_AVOID_TURN;
 
+		// Update floor height to prevent sinking through geometry when nudged by another creature.
+		if (LOT->Fly == NO_FLYING)
+		{
+			floor = GetFloor(item->Pose.Position.x, item->Pose.Position.y, item->Pose.Position.z, &roomNumber);
+			item->Floor = GetFloorHeight(floor, item->Pose.Position.x, item->Pose.Position.y, item->Pose.Position.z);
+			if (item->Pose.Position.y > item->Floor)
+				item->Pose.Position.y = item->Floor;
+		}
+
 		return true;
 	}
 
@@ -1086,8 +1095,11 @@ bool CreaturePathfind(ItemInfo* item, Vector3i prevPos, short angle, short tilt)
 		floor = GetFloor(item->Pose.Position.x, item->Pose.Position.y, item->Pose.Position.z, &roomNumber);
 		item->Floor = GetFloorHeight(floor, item->Pose.Position.x, item->Pose.Position.y, item->Pose.Position.z);
 
-		// Snap to floor or smoothly descend.
-		if (item->Pose.Position.y > item->Floor)
+		// Snap to floor or smoothly ascend/descend.
+		int heightDiff = item->Pose.Position.y - item->Floor;
+		if (heightDiff > CLICK(0.25f) && heightDiff <= CLICK(1))
+			item->Pose.Position.y -= CLICK(0.25f);
+		else if (item->Pose.Position.y > item->Floor)
 			item->Pose.Position.y = item->Floor;
 		else if (item->Floor - item->Pose.Position.y > CLICK(0.25f))
 			item->Pose.Position.y += CLICK(0.25f);
@@ -2144,6 +2156,31 @@ int CreatureVault(short itemNumber, short angle, int vault, int shift)
 	auto* item = &g_Level.Items[itemNumber];
 	auto* creature = GetCreatureInfo(item);
 
+	// Apply a forward pivot offset when stepping up so the vault triggers when the
+	// creature's front half enters the next sector rather than its body centre.
+	int pivotOffsetX = 0;
+	int pivotOffsetZ = 0;
+	if (item->BoxNumber != NO_VALUE)
+	{
+		int nextBox = creature->LOT.Node[item->BoxNumber].exitBox;
+		if (nextBox != NO_VALUE &&
+			g_Level.PathfindingBoxes[nextBox].height < g_Level.PathfindingBoxes[item->BoxNumber].height)
+		{
+			int stepHeight = g_Level.PathfindingBoxes[item->BoxNumber].height - g_Level.PathfindingBoxes[nextBox].height;
+			if (stepHeight <= CLICK(1))
+			{
+				int forwardExtent = GameBoundingBox(item->ObjectNumber, item->Animation.AnimNumber, item->Animation.FrameNumber).Z2 / 2;
+				if (forwardExtent > 0)
+				{
+					pivotOffsetX = (int)(phd_sin(item->Pose.Orientation.y) * forwardExtent);
+					pivotOffsetZ = (int)(phd_cos(item->Pose.Orientation.y) * forwardExtent);
+					item->Pose.Position.x += pivotOffsetX;
+					item->Pose.Position.z += pivotOffsetZ;
+				}
+			}
+		}
+	}
+
 	int xBlock = item->Pose.Position.x / BLOCK(1);
 	int zBlock = item->Pose.Position.z / BLOCK(1);
 	int y = item->Pose.Position.y;
@@ -2169,6 +2206,8 @@ int CreatureVault(short itemNumber, short angle, int vault, int shift)
 	}
 	else if (item->Pose.Position.y > (y - CLICK(1.5f)))
 	{
+		item->Pose.Position.x -= pivotOffsetX;
+		item->Pose.Position.z -= pivotOffsetZ;
 		return 0;
 	}
 	else if (item->Pose.Position.y > (y - CLICK(2.5f)))
@@ -2191,7 +2230,11 @@ int CreatureVault(short itemNumber, short angle, int vault, int shift)
 	if (zBlock == newZblock)
 	{
 		if (xBlock == newXblock)
+		{
+			item->Pose.Position.x -= pivotOffsetX;
+			item->Pose.Position.z -= pivotOffsetZ;
 			return 0;
+		}
 
 		if (xBlock < newXblock)
 		{
