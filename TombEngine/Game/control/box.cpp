@@ -2229,7 +2229,7 @@ int CreatureVault(short itemNumber, short angle, int vault, int shift)
 
 void GetAITarget(CreatureInfo* creature)
 {
-	auto* enemy = creature->Enemy;
+	auto* enemy = creature->Enemy.Get();
 
 	short enemyObjectNumber;
 	if (enemy)
@@ -2281,8 +2281,7 @@ void GetAITarget(CreatureInfo* creature)
 		{
 			FindAITargetObject(creature, ID_AI_AMBUSH);
 		}
-		else if (item->ObjectNumber != ID_MONKEY &&
-			Vector3i::Distance(enemy->Pose.Position, item->Pose.Position) < REACHED_GOAL_RADIUS)
+		else if (Vector3i::Distance(enemy->Pose.Position, item->Pose.Position) < REACHED_GOAL_RADIUS)
 		{
 			TestTriggers(enemy, true);
 			creature->ReachedGoal = true;
@@ -2362,12 +2361,8 @@ void FindAITargetObject(CreatureInfo* creature, int objectNumber, int ocb, bool 
 
 	for (auto& aiObject : g_Level.AIObjects)
 	{
-		bool matchingTriggerFlags = (aiObject.triggerFlags == ocb);
-		if (item.ObjectNumber == ID_MONKEY && objectNumber == ID_AI_AMBUSH)
-			matchingTriggerFlags = true;
-
 		if (aiObject.objectNumber == objectNumber &&
-			matchingTriggerFlags &&
+			aiObject.triggerFlags == ocb &&
 			aiObject.roomNumber != NO_VALUE)
 		{
 			int* zone = g_Level.Zones[(int)creature->LOT.Zone][(int)FlipStatus].data();
@@ -2494,11 +2489,11 @@ void CreatureAIInfo(ItemInfo* item, AI_INFO* AI)
 
 	auto* object = &Objects[item->ObjectNumber];
 	auto* creature = GetCreatureInfo(item);
-	auto* enemy = creature->Enemy;
+	auto* enemy = creature->Enemy.Get();
 
 	// Default to player if no enemy set.
 	// TODO: Deal with LaraItem global.
-	if (enemy == nullptr)
+	if (enemy == nullptr && !creature->Friendly)
 	{
 		enemy = LaraItem;
 		creature->Enemy = LaraItem;
@@ -2510,6 +2505,16 @@ void CreatureAIInfo(ItemInfo* item, AI_INFO* AI)
 	// Update creature's current box and zone.
 	item->BoxNumber = GetSector(room, item->Pose.Position.x - room->Position.x, item->Pose.Position.z - room->Position.z)->PathfindingBoxID;
 	AI->zoneNumber = zone[item->BoxNumber];
+
+	// Friendly creature with no valid target: skip AI computation.
+	if (enemy == nullptr)
+	{
+		AI->distance = AI->verticalDistance = INT_MAX;
+		AI->enemyZone = NO_VALUE;
+		AI->ahead = AI->bite = 0;
+		AI->angle = AI->xAngle = AI->enemyFacing = 0;
+		return;
+	}
 
 	// Get enemy's box (if reachable) and zone.
 	enemy->BoxNumber = TargetReachable(item, enemy);
@@ -2602,8 +2607,7 @@ void CreatureMood(ItemInfo* item, AI_INFO* AI, bool isViolent)
 
 	auto* creature = GetCreatureInfo(item);
 	auto* LOT = &creature->LOT;
-
-	auto* enemy = creature->Enemy;
+	auto* enemy = creature->Enemy.Get();
 
 	// HACK: Fallback to bored mood from attack or escape mood if enemy was cleared.
 	// Replaces previous "fix" with early exit, because it was breaking friendly NPC pathfinding. -- Lwmte, 24.03.25
@@ -2788,7 +2792,7 @@ void GetCreatureMood(ItemInfo* item, AI_INFO* AI, bool isViolent)
 		return;
 
 	auto* creature = GetCreatureInfo(item);
-	auto* enemy = creature->Enemy;
+	auto* enemy = creature->Enemy.Get();
 	auto* LOT = &creature->LOT;
 
 	// Clear target if creature is in a blocked box.
@@ -2808,8 +2812,17 @@ void GetCreatureMood(ItemInfo* item, AI_INFO* AI, bool isViolent)
 	auto mood = creature->Mood;
 
 	// MOOD DECISION LOGIC
-	// Based on enemy state, creature state, and zone relationships.
-	if (enemy)
+	// Based on mood override, enemy state, creature state, and zone relationships.
+	if (creature->ForcedMood.has_value())
+	{
+		// Override the mood with forced mood.
+		auto forcedMood = creature->ForcedMood.value();
+		if (enemy == nullptr && forcedMood != MoodType::Bored)
+			forcedMood = MoodType::Bored;
+
+		creature->Mood = forcedMood;
+	}
+	else if (enemy)
 	{
 		// Enemy is dead - go back to idle wandering.
 		if (enemy->HitPoints <= 0 && enemy == LaraItem) // TODO: deal with LaraItem global !
