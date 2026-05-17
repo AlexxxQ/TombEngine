@@ -174,7 +174,15 @@ namespace TEN::Entities::Creatures::TR3
 		}
 		else
 		{
-			GetAITarget(creature);
+			if (item->AIBits & AMBUSH)
+			{
+				if (creature->Enemy == nullptr || creature->Enemy->ObjectNumber != ID_AI_AMBUSH)
+					FindAITargetObject(creature, ID_AI_AMBUSH, 0, true);
+			}
+			else
+			{
+				GetAITarget(creature);
+			}
 
 			if (creature->HurtByLara)
 				creature->Enemy = LaraItem;
