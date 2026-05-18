@@ -2139,10 +2139,50 @@ bool IsCreatureVaultAvailable(ItemInfo* item, int stepCount)
 	return true;
 }
 
+int GetCreatureVaultForwardOffset(ItemInfo* item, CreatureInfo* creature, int upPivotOffset, int downPivotOffset)
+{
+	if (item->BoxNumber == NO_VALUE)
+		return 0;
+
+	int nextBox = creature->LOT.Node[item->BoxNumber].exitBox;
+	if (nextBox == NO_VALUE)
+		return 0;
+
+	int heightDelta = g_Level.PathfindingBoxes[item->BoxNumber].height - g_Level.PathfindingBoxes[nextBox].height;
+	if (heightDelta == 0 || abs(heightDelta) > BLOCK(1))
+		return 0;
+
+	int forwardOffset = (heightDelta > 0) ? upPivotOffset : downPivotOffset;
+	if (forwardOffset == NO_VALUE)
+		return GameBoundingBox(item->ObjectNumber, item->Animation.AnimNumber, item->Animation.FrameNumber).Z2 / 2;
+
+	return forwardOffset;
+}
+
 int CreatureVault(short itemNumber, short angle, int vault, int shift)
+{
+	return CreatureVault(itemNumber, angle, vault, shift, shift, NO_VALUE, NO_VALUE);
+}
+
+int CreatureVault(short itemNumber, short angle, int vault, int upShift, int downShift)
+{
+	return CreatureVault(itemNumber, angle, vault, upShift, downShift, NO_VALUE, NO_VALUE);
+}
+
+int CreatureVault(short itemNumber, short angle, int vault, int upShift, int downShift, int upPivotOffset, int downPivotOffset)
 {
 	auto* item = &g_Level.Items[itemNumber];
 	auto* creature = GetCreatureInfo(item);
+
+	// Probe ahead when changing height so vault can trigger before the body pivot reaches the next sector.
+	int pivotOffsetX = 0;
+	int pivotOffsetZ = 0;
+	int forwardOffset = GetCreatureVaultForwardOffset(item, creature, upPivotOffset, downPivotOffset);
+	if (forwardOffset > 0)
+	{
+		pivotOffsetX = (int)(phd_sin(item->Pose.Orientation.y) * forwardOffset);
+		pivotOffsetZ = (int)(phd_cos(item->Pose.Orientation.y) * forwardOffset);
+	}
 
 	int xBlock = item->Pose.Position.x / BLOCK(1);
 	int zBlock = item->Pose.Position.z / BLOCK(1);
@@ -2151,21 +2191,41 @@ int CreatureVault(short itemNumber, short angle, int vault, int shift)
 
 	CreatureAnimation(itemNumber, angle, 0);
 
-	if (item->Floor > (y + CLICK(4.5f)))
+	int probeX = item->Pose.Position.x + pivotOffsetX;
+	int probeZ = item->Pose.Position.z + pivotOffsetZ;
+	int vaultFloor = item->Floor;
+	if (pivotOffsetX != 0 || pivotOffsetZ != 0)
+		vaultFloor = GetPointCollision(Vector3i(probeX, item->Pose.Position.y, probeZ), item->RoomNumber).GetFloorHeight();
+
+	if (vaultFloor > (y + CLICK(4.5f)))
 	{
 		vault = 0;
 	}
-	else if (item->Floor > (y + CLICK(3.5f)) && IsCreatureVaultAvailable(item, -4))
+	else if (vaultFloor > (y + CLICK(3.5f)) && IsCreatureVaultAvailable(item, -4))
 	{
 		vault = -4;
 	}
-	else if (item->Floor > (y + CLICK(2.5f)) && IsCreatureVaultAvailable(item, -3))
+	else if (vaultFloor > (y + CLICK(2.5f)) && IsCreatureVaultAvailable(item, -3))
 	{
 		vault = -3;
 	}
-	else if (item->Floor > (y + CLICK(1.5f)) && IsCreatureVaultAvailable(item, -2))
+	else if (vaultFloor > (y + CLICK(1.5f)) && IsCreatureVaultAvailable(item, -2))
 	{
 		vault = -2;
+	}
+	else if (vaultFloor < y)
+	{
+		int vaultHeight = y - vaultFloor;
+		if (vaultHeight < CLICK(1.5f))
+			return 0;
+		else if (vaultHeight < CLICK(2.5f))
+			vault = 2;
+		else if (vaultHeight < CLICK(3.5f))
+			vault = 3;
+		else if (vaultHeight < CLICK(4.5f))
+			vault = 4;
+		else
+			vault = 0;
 	}
 	else if (item->Pose.Position.y > (y - CLICK(1.5f)))
 	{
@@ -2185,22 +2245,25 @@ int CreatureVault(short itemNumber, short angle, int vault, int shift)
 	}
 
 	// Jump
-	int newXblock = item->Pose.Position.x / BLOCK(1);
-	int newZblock = item->Pose.Position.z / BLOCK(1);
+	int newXblock = probeX / BLOCK(1);
+	int newZblock = probeZ / BLOCK(1);
+	int vaultShift = (vault < 0) ? downShift : upShift;
 
 	if (zBlock == newZblock)
 	{
 		if (xBlock == newXblock)
+		{
 			return 0;
+		}
 
 		if (xBlock < newXblock)
 		{
-			item->Pose.Position.x = (newXblock * BLOCK(1)) - shift;
+			item->Pose.Position.x = (newXblock * BLOCK(1)) - vaultShift;
 			item->Pose.Orientation.y = ANGLE(90.0f);
 		}
 		else
 		{
-			item->Pose.Position.x = (xBlock * BLOCK(1)) + shift;
+			item->Pose.Position.x = (xBlock * BLOCK(1)) + vaultShift;
 			item->Pose.Orientation.y = -ANGLE(90.0f);
 		}
 	}
@@ -2208,12 +2271,12 @@ int CreatureVault(short itemNumber, short angle, int vault, int shift)
 	{
 		if (zBlock < newZblock)
 		{
-			item->Pose.Position.z = (newZblock * BLOCK(1)) - shift;
+			item->Pose.Position.z = (newZblock * BLOCK(1)) - vaultShift;
 			item->Pose.Orientation.y = 0;
 		}
 		else
 		{
-			item->Pose.Position.z = (zBlock * BLOCK(1)) + shift;
+			item->Pose.Position.z = (zBlock * BLOCK(1)) + vaultShift;
 			item->Pose.Orientation.y = -ANGLE(180.0f);
 		}
 	}
