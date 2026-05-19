@@ -903,6 +903,15 @@ bool CreaturePathfind(ItemInfo* item, Vector3i prevPos, short angle, short tilt)
 		else
 			item->Pose.Orientation.y += BIFF_AVOID_TURN;
 
+		// Update floor height to prevent sinking through geometry when nudged by another creature.
+		if (LOT->Fly == NO_FLYING)
+		{
+			floor = GetFloor(item->Pose.Position.x, item->Pose.Position.y, item->Pose.Position.z, &roomNumber);
+			item->Floor = GetFloorHeight(floor, item->Pose.Position.x, item->Pose.Position.y, item->Pose.Position.z);
+			if (item->Pose.Position.y > item->Floor)
+				item->Pose.Position.y = item->Floor;
+		}
+
 		return true;
 	}
 
@@ -1086,8 +1095,11 @@ bool CreaturePathfind(ItemInfo* item, Vector3i prevPos, short angle, short tilt)
 		floor = GetFloor(item->Pose.Position.x, item->Pose.Position.y, item->Pose.Position.z, &roomNumber);
 		item->Floor = GetFloorHeight(floor, item->Pose.Position.x, item->Pose.Position.y, item->Pose.Position.z);
 
-		// Snap to floor or smoothly descend.
-		if (item->Pose.Position.y > item->Floor)
+		// Snap to floor or smoothly ascend/descend.
+		int heightDiff = item->Pose.Position.y - item->Floor;
+		if (heightDiff > CLICK(0.25f) && heightDiff <= CLICK(1))
+			item->Pose.Position.y -= CLICK(0.25f);
+		else if (item->Pose.Position.y > item->Floor)
 			item->Pose.Position.y = item->Floor;
 		else if (item->Floor - item->Pose.Position.y > CLICK(0.25f))
 			item->Pose.Position.y += CLICK(0.25f);
