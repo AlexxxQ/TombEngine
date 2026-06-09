@@ -555,7 +555,14 @@ void ChaseCamera(ItemInfo* item)
 	if (!Camera.targetElevation)
 		Camera.targetElevation = -ANGLE(10.0f);
 
-	Camera.targetElevation += item->Pose.Orientation.x;
+	// Don't fold a dead player's pitch into the camera angle. While Lara is dead in
+	// an enemy-kill extra animation, lara_as_death() keeps aligning her to the floor
+	// normal, so on a sloped sector her pitch becomes non-zero and the camera tilts
+	// and nods with it. On flat sectors the floor normal is vertical, her pitch stays
+	// 0, and the bug doesn't appear - which is exactly the slope dependency observed.
+	if (item->HitPoints > 0)
+		Camera.targetElevation += item->Pose.Orientation.x;
+
 	UpdateCameraElevation();
 
 	// Clamp X orientation.
@@ -681,15 +688,20 @@ void CombatCamera(ItemInfo* item)
 	Camera.target.x = item->Pose.Position.x;
 	Camera.target.z = item->Pose.Position.z;
 
+	// Don't fold a dead player's pitch into the camera angle (see ChaseCamera): a
+	// dead Lara gets aligned to the floor normal, so on a slope her pitch would tilt
+	// and nod the camera.
+	short playerPitch = (item->HitPoints > 0) ? item->Pose.Orientation.x : 0;
+
 	if (player.TargetEntity)
 	{
 		Camera.targetAngle = player.TargetArmOrient.y;
-		Camera.targetElevation = player.TargetArmOrient.x + item->Pose.Orientation.x;
+		Camera.targetElevation = player.TargetArmOrient.x + playerPitch;
 	}
 	else
 	{
 		Camera.targetAngle = player.ExtraHeadRot.y + player.ExtraTorsoRot.y;
-		Camera.targetElevation = player.ExtraHeadRot.x + player.ExtraTorsoRot.x + item->Pose.Orientation.x - ANGLE(15.0f);
+		Camera.targetElevation = player.ExtraHeadRot.x + player.ExtraTorsoRot.x + playerPitch - ANGLE(15.0f);
 	}
 
 	auto pointColl = GetPointCollision(Vector3i(Camera.target.x, Camera.target.y + CLICK(1), Camera.target.z), Camera.target.RoomNumber);

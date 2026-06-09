@@ -112,7 +112,7 @@ namespace TEN::Entities::Creatures::TR2
 
 			if (creature->Enemy && creature->Enemy.IsLara() && creature->Enemy->HitPoints <= 0 && laraAlive)
 			{
-				CreatureKill(item, SHARK_KILL_ANIM, LEA_SHARK_DEATH, SHARK_KILL_STATE, LS_WATER_DEATH);
+				CreatureKill(item, SHARK_KILL_ANIM, LEA_SHARK_DEATH, SHARK_KILL_STATE, LS_DEATH);
 				return;
 			}
 		}
@@ -124,6 +124,22 @@ namespace TEN::Entities::Creatures::TR2
 			CreatureUnderwater(item, 340);
 		}
 		else
+		{
+			// In the original TR2, Item_Animate() doesn't move the root, so the
+			// one-shot alignment from CreatureKill() stayed valid for the whole
+			// devour. In TEN, AnimateItem() applies the kill-anim's root velocity,
+			// which slowly swims the shark out from under Lara (and makes the
+			// follow-camera chase it). Keep the shark's root anchored in place.
+			auto anchorPose = item->Pose;
 			AnimateItem(item);
+			item->Pose = anchorPose;
+
+			// Re-lock Lara into the jaws every frame (position + orientation).
+			// Her death state keeps levelling her pitch toward the floor, so
+			// without this she drifts apart from the shark in rotation.
+			LaraItem->Pose = item->Pose;
+			if (LaraItem->RoomNumber != item->RoomNumber)
+				ItemNewRoom(LaraItem->Index, item->RoomNumber);
+		}
 	}
 }
