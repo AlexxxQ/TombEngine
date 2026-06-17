@@ -37,6 +37,7 @@
 #include "Game/Animation/Animation.h"
 #include "Game/camera.h"
 #include "Game/collision/collide_room.h"
+#include "Game/collision/floordata.h"
 #include "Game/collision/Los.h"
 #include "Game/collision/Point.h"
 #include "Game/control/control.h"
@@ -83,6 +84,33 @@ constexpr auto CREATURE_JOINT_ROTATION_MAX = ANGLE(70.0f);	// Maximum joint rota
 constexpr auto CREATURE_FLY_SMOOTH_FACTOR = 0.1f;			// Smoothing factor for fly/vertical swim velocity.
 
 int PathfindingDisplayIndex = NO_VALUE;
+
+constexpr auto BADDY_MONKEY_FALL_LAND_STATE = 22;
+constexpr auto MONKEY_SWING_CEILING_SNAP_LIMIT = CLICK(1.25f);
+
+struct MonkeySwingSectorInfo
+{
+	int X = 0;
+	int Z = 0;
+	int Ceiling = NO_HEIGHT;
+};
+
+struct MonkeySwingBoxCache
+{
+	bool Initialized = false;
+	bool FlipStatusValue = false;
+	int BoxCount = 0;
+	int RoomCount = 0;
+	int SectorCount = 0;
+	std::vector<unsigned char> MonkeyBoxes = {};
+	std::vector<unsigned char> ExitBoxes = {};
+	std::vector<std::vector<MonkeySwingSectorInfo>> BoxSectors = {};
+};
+
+static MonkeySwingBoxCache MonkeySwingBoxCacheData = {};
+
+static int GetCurrentExitOverlapFlags(LOTInfo* LOT, int boxNumber, int* exitBox);
+static int GetOverlapFlagsBetweenBoxes(int fromBox, int toBox);
 
 static Vector3 GetVelocity(const ItemInfo& item)
 {
@@ -588,6 +616,29 @@ static void AddBadBox(LOTInfo* LOT, int boxNumber)
 	}
 }
 
+static void CooldownBadBox(LOTInfo* LOT, int boxNumber)
+{
+	if (boxNumber == NO_VALUE)
+		return;
+
+	if (g_GameFlow->GetSettings()->Pathfinding.CollisionPenaltyThreshold <= EPSILON)
+		return;
+
+	int penaltyCooldown = (int)(g_GameFlow->GetSettings()->Pathfinding.CollisionPenaltyCooldown * FPS);
+	if (penaltyCooldown < 1)
+		penaltyCooldown = 1;
+	for (auto& badBox : LOT->BadBoxes)
+	{
+		if (badBox.BoxNumber != boxNumber && badBox.BoxNumber != NO_VALUE)
+			continue;
+
+		badBox.Valid = false;
+		badBox.BoxNumber = boxNumber;
+		badBox.Count = -penaltyCooldown;
+		return;
+	}
+}
+
 /**
 * @brief Checks if a pathfinding box is bad and currently in cooldown.
  *
@@ -609,6 +660,819 @@ static bool IsBoxInCooldown(const LOTInfo* LOT, int boxNumber)
 	return false;
 }
 
+static bool IsNodeInCurrentSearch(const LOTInfo* LOT, int boxNumber)
+{
+	if (boxNumber == NO_VALUE || LOT->SearchNumber == 0)
+		return false;
+
+	return (LOT->Node[boxNumber].searchNumber & SEARCH_NUMBER) == (LOT->SearchNumber & SEARCH_NUMBER);
+}
+
+static bool IsMonkeySwingRouteBox(const LOTInfo* LOT, int boxNumber)
+{
+	if (LOT == nullptr || boxNumber == NO_VALUE)
+		return false;
+
+	return IsNodeInCurrentSearch(LOT, boxNumber) ||
+		LOT->TargetBox == boxNumber ||
+		LOT->RequiredBox == boxNumber;
+}
+
+static int GetMonkeySwingCeiling(FloorInfo* sector, int x, int y, int z, int handCeiling)
+{
+	if (sector == nullptr)
+		return NO_HEIGHT;
+
+	int ceiling = GetCeiling(sector, x, y, z);
+	int localCeiling = sector->GetSurfaceHeight(x, z, false);
+	if (localCeiling != NO_HEIGHT &&
+		(ceiling == NO_HEIGHT || abs(localCeiling - handCeiling) < abs(ceiling - handCeiling)))
+	{
+		return localCeiling;
+	}
+
+	return ceiling;
+}
+
+static bool HasMonkeySwingSupport(bool isMonkey, int ceilingOffset)
+{
+	return isMonkey && ceilingOffset <= MONKEY_SWING_CEILING_SNAP_LIMIT;
+}
+
+static bool IsMonkeySwingEntryHeight(int heightDelta)
+{
+	return heightDelta >= CLICK(5) && heightDelta <= CLICK(6);
+}
+
+static bool IsMonkeySwingExitHeight(int heightDelta)
+{
+	return IsMonkeySwingEntryHeight(heightDelta);
+}
+
+static int GetMonkeySwingHeightDelta(const FloorInfo& sector, int x, int z)
+{
+	int y = sector.GetSurfaceHeight(x, z, true);
+	int floor = TEN::Collision::Floordata::GetSurfaceHeight(RoomVector(sector.RoomNumber, y), x, z, true).value_or(NO_HEIGHT);
+	int ceiling = TEN::Collision::Floordata::GetSurfaceHeight(RoomVector(sector.RoomNumber, y), x, z, false).value_or(NO_HEIGHT);
+
+	if (floor == NO_HEIGHT || ceiling == NO_HEIGHT)
+		return INT_MAX;
+
+	return floor - ceiling;
+}
+
+static bool IsLaraMonkeyState(ItemInfo* item)
+{
+	if (!item->IsLara())
+		return false;
+
+	auto state = item->Animation.ActiveState;
+	return state == LS_MONKEY_IDLE ||
+		   state == LS_MONKEY_FORWARD ||
+		   state == LS_MONKEY_SHIMMY_LEFT ||
+		   state == LS_MONKEY_SHIMMY_RIGHT ||
+		   state == LS_MONKEY_TURN_180 ||
+		   state == LS_MONKEY_TURN_LEFT ||
+		   state == LS_MONKEY_TURN_RIGHT ||
+		   state == LS_MONKEY_BACK;
+}
+
+static bool IsMonkeySwingTarget(ItemInfo* item)
+{
+	if (IsLaraMonkeyState(item))
+		return true;
+
+	return item->IsCreature() && GetCreatureInfo(item)->LOT.IsMonkeying;
+}
+
+static int GetBoxGridCoordinate(int value)
+{
+	if (value >= 0)
+		return value / BLOCK(1);
+
+	return -((-value + BLOCK(1) - 1) / BLOCK(1));
+}
+
+static bool IsVerticalPortalTarget(ItemInfo* item, ItemInfo* enemy, LOTInfo* LOT, AI_INFO* AI)
+{
+	if (item == nullptr || enemy == nullptr || LOT == nullptr || AI == nullptr)
+		return false;
+
+	if (item->RoomNumber == enemy->RoomNumber || AI->verticalDistance == INT_MAX)
+		return false;
+
+	if (AI->verticalDistance <= LOT->Step && AI->verticalDistance >= LOT->Drop)
+		return false;
+
+	return GetBoxGridCoordinate(item->Pose.Position.x) == GetBoxGridCoordinate(enemy->Pose.Position.x) &&
+		GetBoxGridCoordinate(item->Pose.Position.z) == GetBoxGridCoordinate(enemy->Pose.Position.z);
+}
+
+static int GetMonkeySwingTargetBox(ItemInfo* item)
+{
+	auto probe = GetPointCollision(*item);
+	auto& sector = probe.GetBottomSector();
+	if (!sector.Flags.Monkeyswing || sector.PathfindingBoxID == NO_VALUE)
+		return NO_VALUE;
+
+	return sector.PathfindingBoxID;
+}
+
+static FloorInfo* GetCurrentRoomSector(ItemInfo* item)
+{
+	if (item == nullptr || item->RoomNumber < 0 || item->RoomNumber >= (int)g_Level.Rooms.size())
+		return nullptr;
+
+	auto* room = &g_Level.Rooms[item->RoomNumber];
+	return GetSector(room, item->Pose.Position.x - room->Position.x, item->Pose.Position.z - room->Position.z);
+}
+
+static FloorInfo* GetBoxSectorAtPosition(int boxNumber, const Vector3i& position, int* roomNumber)
+{
+	if (boxNumber == NO_VALUE)
+		return nullptr;
+
+	for (int i = 0; i < (int)g_Level.Rooms.size(); i++)
+	{
+		auto* room = &g_Level.Rooms[i];
+		if (position.x < room->Position.x ||
+			position.z < room->Position.z ||
+			position.x >= room->Position.x + room->XSize * BLOCK(1) ||
+			position.z >= room->Position.z + room->ZSize * BLOCK(1))
+		{
+			continue;
+		}
+
+		auto* sector = GetSector(room, position.x - room->Position.x, position.z - room->Position.z);
+		if (sector->PathfindingBoxID != boxNumber)
+			continue;
+
+		if (roomNumber != nullptr)
+			*roomNumber = i;
+
+		return sector;
+	}
+
+	return nullptr;
+}
+
+static void BuildMonkeySwingBoxCache()
+{
+	int sectorCount = 0;
+	for (const auto& room : g_Level.Rooms)
+		sectorCount += (int)room.Sectors.size();
+
+	int boxCount = (int)g_Level.PathfindingBoxes.size();
+	int roomCount = (int)g_Level.Rooms.size();
+	bool shouldRebuild =
+		!MonkeySwingBoxCacheData.Initialized ||
+		MonkeySwingBoxCacheData.BoxCount != boxCount ||
+		MonkeySwingBoxCacheData.RoomCount != roomCount ||
+		MonkeySwingBoxCacheData.SectorCount != sectorCount ||
+		MonkeySwingBoxCacheData.FlipStatusValue != FlipStatus;
+
+	if (!shouldRebuild)
+		return;
+
+	MonkeySwingBoxCacheData.Initialized = true;
+	MonkeySwingBoxCacheData.FlipStatusValue = FlipStatus;
+	MonkeySwingBoxCacheData.BoxCount = boxCount;
+	MonkeySwingBoxCacheData.RoomCount = roomCount;
+	MonkeySwingBoxCacheData.SectorCount = sectorCount;
+	MonkeySwingBoxCacheData.MonkeyBoxes.assign(boxCount, 0);
+	MonkeySwingBoxCacheData.ExitBoxes.assign(boxCount, 0);
+	MonkeySwingBoxCacheData.BoxSectors.assign(boxCount, {});
+
+	for (const auto& room : g_Level.Rooms)
+	{
+		for (const auto& sector : room.Sectors)
+		{
+			int boxNumber = sector.PathfindingBoxID;
+			if (boxNumber == NO_VALUE || !sector.Flags.Monkeyswing)
+				continue;
+
+			if (boxNumber < 0 || boxNumber >= boxCount)
+				continue;
+
+			MonkeySwingBoxCacheData.MonkeyBoxes[boxNumber] = 1;
+
+			int x = sector.Position.x + CLICK(2);
+			int z = sector.Position.y + CLICK(2);
+			int y = sector.GetSurfaceHeight(x, z, true);
+			int ceiling = TEN::Collision::Floordata::GetSurfaceHeight(RoomVector(sector.RoomNumber, y), x, z, false).value_or(NO_HEIGHT);
+			if (ceiling != NO_HEIGHT)
+				MonkeySwingBoxCacheData.BoxSectors[boxNumber].push_back({ sector.Position.x, sector.Position.y, ceiling });
+
+			int heightDelta = GetMonkeySwingHeightDelta(sector, x, z);
+			if (IsMonkeySwingExitHeight(heightDelta))
+				MonkeySwingBoxCacheData.ExitBoxes[boxNumber] = 1;
+		}
+	}
+}
+
+static bool MonkeySwingSectorsShareEdge(const MonkeySwingSectorInfo& first, const MonkeySwingSectorInfo& second)
+{
+	if (abs(first.Ceiling - second.Ceiling) > MONKEY_SWING_CEILING_SNAP_LIMIT)
+		return false;
+
+	bool shareXEdge = first.Z == second.Z &&
+		(first.X + BLOCK(1) == second.X || second.X + BLOCK(1) == first.X);
+	bool shareZEdge = first.X == second.X &&
+		(first.Z + BLOCK(1) == second.Z || second.Z + BLOCK(1) == first.Z);
+
+	return shareXEdge || shareZEdge;
+}
+
+static bool MonkeySwingSectorsShareColumn(const MonkeySwingSectorInfo& first, const MonkeySwingSectorInfo& second)
+{
+	return first.X == second.X &&
+		first.Z == second.Z &&
+		abs(first.Ceiling - second.Ceiling) <= MONKEY_SWING_CEILING_SNAP_LIMIT;
+}
+
+static bool MonkeySwingSectorsConnectInBox(const MonkeySwingSectorInfo& first, const MonkeySwingSectorInfo& second)
+{
+	return MonkeySwingSectorsShareEdge(first, second) ||
+		MonkeySwingSectorsShareColumn(first, second);
+}
+
+static bool MonkeySwingBoxesShareEdge(int firstBox, int secondBox)
+{
+	if (firstBox == secondBox)
+		return true;
+
+	BuildMonkeySwingBoxCache();
+
+	if (firstBox < 0 || secondBox < 0 ||
+		firstBox >= (int)MonkeySwingBoxCacheData.BoxSectors.size() ||
+		secondBox >= (int)MonkeySwingBoxCacheData.BoxSectors.size())
+	{
+		return false;
+	}
+
+	const auto& firstSectors = MonkeySwingBoxCacheData.BoxSectors[firstBox];
+	const auto& secondSectors = MonkeySwingBoxCacheData.BoxSectors[secondBox];
+
+	for (const auto& first : firstSectors)
+	{
+		for (const auto& second : secondSectors)
+		{
+			if (MonkeySwingSectorsShareEdge(first, second))
+				return true;
+		}
+	}
+
+	return false;
+}
+
+static bool MonkeySwingBoxConnectsToComponent(int boxNumber, const std::vector<MonkeySwingSectorInfo>& viaSectors, const std::vector<int>& components, int component)
+{
+	if (boxNumber == NO_VALUE || component == NO_VALUE)
+		return false;
+
+	if (boxNumber < 0 || boxNumber >= (int)MonkeySwingBoxCacheData.BoxSectors.size())
+		return false;
+
+	const auto& sectors = MonkeySwingBoxCacheData.BoxSectors[boxNumber];
+	for (const auto& sector : sectors)
+	{
+		for (int i = 0; i < (int)viaSectors.size(); i++)
+		{
+			if (components[i] == component && MonkeySwingSectorsShareEdge(sector, viaSectors[i]))
+				return true;
+		}
+	}
+
+	return false;
+}
+
+static bool MonkeySwingRouteSharesComponent(int fromBox, int viaBox, int toBox)
+{
+	if (fromBox == NO_VALUE || viaBox == NO_VALUE || toBox == NO_VALUE)
+		return true;
+
+	BuildMonkeySwingBoxCache();
+
+	if (viaBox < 0 || viaBox >= (int)MonkeySwingBoxCacheData.BoxSectors.size())
+		return false;
+
+	const auto& viaSectors = MonkeySwingBoxCacheData.BoxSectors[viaBox];
+	if (viaSectors.empty())
+		return true;
+
+	if (fromBox < 0 || fromBox >= (int)MonkeySwingBoxCacheData.BoxSectors.size() ||
+		toBox < 0 || toBox >= (int)MonkeySwingBoxCacheData.BoxSectors.size() ||
+		MonkeySwingBoxCacheData.BoxSectors[fromBox].empty() ||
+		MonkeySwingBoxCacheData.BoxSectors[toBox].empty())
+	{
+		return true;
+	}
+
+	std::vector<int> components(viaSectors.size(), NO_VALUE);
+	std::vector<int> stack = {};
+	int component = 0;
+
+	for (int i = 0; i < (int)viaSectors.size(); i++)
+	{
+		if (components[i] != NO_VALUE)
+			continue;
+
+		components[i] = component;
+		stack.push_back(i);
+
+		while (!stack.empty())
+		{
+			int sectorIndex = stack.back();
+			stack.pop_back();
+
+			for (int j = 0; j < (int)viaSectors.size(); j++)
+			{
+				if (components[j] != NO_VALUE)
+					continue;
+
+				if (!MonkeySwingSectorsConnectInBox(viaSectors[sectorIndex], viaSectors[j]))
+					continue;
+
+				components[j] = component;
+				stack.push_back(j);
+			}
+		}
+
+		if (MonkeySwingBoxConnectsToComponent(fromBox, viaSectors, components, component) &&
+			MonkeySwingBoxConnectsToComponent(toBox, viaSectors, components, component))
+		{
+			return true;
+		}
+
+		component++;
+	}
+
+	return false;
+}
+
+static bool CanContinueMonkeySwingRoute(LOTInfo* LOT, int fromBox, int viaBox, int toBox, int fromFlags)
+{
+	if (LOT == nullptr || !(fromFlags & OVERLAP_MONKEY) || !LOT->CanMonkey || toBox == NO_VALUE)
+		return true;
+
+	int toFlags = GetOverlapFlagsBetweenBoxes(viaBox, toBox);
+	if (!(toFlags & OVERLAP_MONKEY))
+		return true;
+
+	return MonkeySwingRouteSharesComponent(fromBox, viaBox, toBox);
+}
+
+static bool IsMonkeySwingBox(int boxNumber)
+{
+	if (boxNumber == NO_VALUE || boxNumber < 0 || boxNumber >= (int)g_Level.PathfindingBoxes.size())
+		return false;
+
+	BuildMonkeySwingBoxCache();
+	return MonkeySwingBoxCacheData.MonkeyBoxes[boxNumber] != 0;
+}
+
+static bool IsMonkeySwingExitBox(int boxNumber)
+{
+	if (boxNumber == NO_VALUE || boxNumber < 0 || boxNumber >= (int)g_Level.PathfindingBoxes.size())
+		return false;
+
+	BuildMonkeySwingBoxCache();
+	return MonkeySwingBoxCacheData.ExitBoxes[boxNumber] != 0;
+}
+
+static bool HasMonkeySwingBoxAtCeiling(int boxNumber, int handCeiling)
+{
+	if (boxNumber == NO_VALUE)
+		return false;
+
+	for (auto& room : g_Level.Rooms)
+	{
+		for (auto& sector : room.Sectors)
+		{
+			if (sector.PathfindingBoxID != boxNumber || !sector.Flags.Monkeyswing)
+				continue;
+
+			int x = sector.Position.x + CLICK(2);
+			int z = sector.Position.y + CLICK(2);
+			int y = sector.GetSurfaceHeight(x, z, true);
+			int ceiling = GetMonkeySwingCeiling(&sector, x, y, z, handCeiling);
+			if (ceiling != NO_HEIGHT && abs(ceiling - handCeiling) <= MONKEY_SWING_CEILING_SNAP_LIMIT)
+				return true;
+		}
+	}
+
+	return false;
+}
+
+static bool IsMonkeySwingEntryBox(int boxNumber)
+{
+	if (boxNumber == NO_VALUE)
+		return false;
+
+	for (const auto& room : g_Level.Rooms)
+	{
+		for (const auto& sector : room.Sectors)
+		{
+			if (sector.PathfindingBoxID != boxNumber || !sector.Flags.Monkeyswing)
+				continue;
+
+			int x = sector.Position.x + CLICK(2);
+			int z = sector.Position.y + CLICK(2);
+			int heightDelta = GetMonkeySwingHeightDelta(sector, x, z);
+			if (IsMonkeySwingEntryHeight(heightDelta))
+				return true;
+		}
+	}
+
+	return false;
+}
+
+static bool CanStartMonkeySwingHere(ItemInfo* item)
+{
+	auto probe = GetPointCollision(*item);
+	if (!probe.GetBottomSector().Flags.Monkeyswing)
+		return false;
+
+	return IsMonkeySwingEntryHeight(probe.GetFloorHeight() - probe.GetCeilingHeight());
+}
+
+static int GetOverlapFlagsBetweenBoxes(int fromBox, int toBox)
+{
+	if (fromBox == NO_VALUE || toBox == NO_VALUE)
+		return 0;
+
+	if (fromBox < 0 || toBox < 0 || fromBox >= (int)g_Level.PathfindingBoxes.size() || toBox >= (int)g_Level.PathfindingBoxes.size())
+		return 0;
+
+	int overlapIndex = g_Level.PathfindingBoxes[fromBox].overlapIndex;
+	int nextBox = NO_VALUE;
+	int flags = 0;
+
+	if (overlapIndex >= 0)
+	{
+		do
+		{
+			nextBox = g_Level.Overlaps[overlapIndex].box;
+			flags = g_Level.Overlaps[overlapIndex++].flags;
+		} while (nextBox != NO_VALUE && ((flags & OVERLAP_END_BIT) == false) && nextBox != toBox);
+	}
+
+	if (nextBox != toBox)
+		return 0;
+
+	return flags;
+}
+
+static bool PathUsesMonkeyOverlap(const LOTInfo* LOT, int startBox)
+{
+	if (startBox == NO_VALUE)
+		return false;
+
+	int boxNumber = startBox;
+	int pathLimit = (int)g_Level.PathfindingBoxes.size();
+	for (int i = 0; i < pathLimit; i++)
+	{
+		if (boxNumber < 0 || boxNumber >= pathLimit)
+			return false;
+
+		if (!IsNodeInCurrentSearch(LOT, boxNumber))
+			return false;
+
+		int nextBox = LOT->Node[boxNumber].exitBox;
+		if (nextBox == NO_VALUE)
+			return false;
+
+		int flags = GetOverlapFlagsBetweenBoxes(boxNumber, nextBox);
+		if (flags & OVERLAP_MONKEY)
+			return true;
+
+		if (nextBox == boxNumber)
+			return false;
+
+		boxNumber = nextBox;
+	}
+
+	return false;
+}
+
+static bool PathUsesMonkeySwingChain(const LOTInfo* LOT, int startBox)
+{
+	if (startBox == NO_VALUE)
+		return false;
+
+	int boxNumber = startBox;
+	int pathLimit = (int)g_Level.PathfindingBoxes.size();
+	for (int i = 0; i < pathLimit; i++)
+	{
+		if (boxNumber < 0 || boxNumber >= pathLimit)
+			return false;
+
+		if (!IsNodeInCurrentSearch(LOT, boxNumber))
+			return false;
+
+		int nextBox = LOT->Node[boxNumber].exitBox;
+		if (nextBox == NO_VALUE || nextBox == boxNumber)
+			return false;
+
+		int flags = GetOverlapFlagsBetweenBoxes(boxNumber, nextBox);
+		if ((flags & OVERLAP_MONKEY) &&
+			IsMonkeySwingBox(boxNumber) &&
+			IsMonkeySwingBox(nextBox) &&
+			MonkeySwingBoxesShareEdge(boxNumber, nextBox))
+		{
+			return true;
+		}
+
+		boxNumber = nextBox;
+	}
+
+	return false;
+}
+
+static float GetRouteCostToTarget(const LOTInfo* LOT, int startBox)
+{
+	if (startBox == NO_VALUE)
+		return FLT_MAX;
+
+	int boxNumber = startBox;
+	int pathLimit = (int)g_Level.PathfindingBoxes.size();
+	float cost = 0.0f;
+
+	for (int i = 0; i < pathLimit; i++)
+	{
+		if (boxNumber < 0 || boxNumber >= pathLimit)
+			return FLT_MAX;
+
+		if (!IsNodeInCurrentSearch(LOT, boxNumber))
+			return FLT_MAX;
+
+		int nextBox = LOT->Node[boxNumber].exitBox;
+		if (nextBox == NO_VALUE)
+			return cost;
+
+		if (nextBox == boxNumber)
+			return FLT_MAX;
+
+		cost += Vector3::Distance(GetBoxCenter(boxNumber), GetBoxCenter(nextBox));
+		boxNumber = nextBox;
+	}
+
+	return FLT_MAX;
+}
+
+static void ResetLOTSearch(LOTInfo* LOT, int targetBox)
+{
+	LOT->Head = NO_VALUE;
+	LOT->Tail = NO_VALUE;
+	LOT->TargetBox = NO_VALUE;
+	LOT->RequiredBox = targetBox;
+
+	for (auto& node : LOT->Node)
+		node.nextExpansion = NO_VALUE;
+}
+
+static bool RebuildLOTWithoutMonkey(LOTInfo* LOT, int targetBox, int searchDepth)
+{
+	bool canMonkey = LOT->CanMonkey;
+	LOT->CanMonkey = false;
+	ResetLOTSearch(LOT, targetBox);
+	bool result = UpdateLOT(LOT, searchDepth);
+	LOT->CanMonkey = canMonkey;
+
+	return result;
+}
+
+static bool CanReachMonkeyEntryOnGround(ItemInfo* item, LOTInfo* LOT, int entryBox, int searchDepth, LOTInfo* outLOT = nullptr, float* routeCost = nullptr)
+{
+	if (routeCost != nullptr)
+		*routeCost = FLT_MAX;
+
+	if (item == nullptr || item->BoxNumber == NO_VALUE || entryBox == NO_VALUE)
+		return false;
+
+	auto groundLOT = *LOT;
+	RebuildLOTWithoutMonkey(&groundLOT, entryBox, searchDepth);
+	if (!IsNodeInCurrentSearch(&groundLOT, item->BoxNumber))
+		return false;
+
+	if (routeCost != nullptr)
+		*routeCost = GetRouteCostToTarget(&groundLOT, item->BoxNumber);
+
+	if (outLOT != nullptr)
+		*outLOT = groundLOT;
+
+	return true;
+}
+
+static bool IsUsefulMonkeyEntryForTarget(
+	ItemInfo* enemy,
+	LOTInfo* LOT,
+	int entryBox,
+	int searchDepth,
+	bool* entryCanReachTarget = nullptr,
+	bool* entryUsesMonkeyToTarget = nullptr,
+	bool* entryCanReachTargetWithoutMonkey = nullptr)
+{
+	if (entryCanReachTarget != nullptr)
+		*entryCanReachTarget = false;
+
+	if (entryUsesMonkeyToTarget != nullptr)
+		*entryUsesMonkeyToTarget = false;
+
+	if (entryCanReachTargetWithoutMonkey != nullptr)
+		*entryCanReachTargetWithoutMonkey = false;
+
+	if (enemy == nullptr || enemy->BoxNumber == NO_VALUE || entryBox == NO_VALUE)
+		return false;
+
+	auto targetLOT = *LOT;
+	targetLOT.CanMonkey = true;
+	ResetLOTSearch(&targetLOT, enemy->BoxNumber);
+	UpdateLOT(&targetLOT, searchDepth);
+	bool canReachTarget = IsNodeInCurrentSearch(&targetLOT, entryBox);
+	bool usesMonkeyToTarget = canReachTarget && PathUsesMonkeySwingChain(&targetLOT, entryBox);
+
+	auto groundTargetLOT = *LOT;
+	bool canReachTargetWithoutMonkey = false;
+	if (canReachTarget && usesMonkeyToTarget)
+	{
+		RebuildLOTWithoutMonkey(&groundTargetLOT, enemy->BoxNumber, searchDepth);
+		canReachTargetWithoutMonkey = IsNodeInCurrentSearch(&groundTargetLOT, entryBox);
+	}
+
+	if (entryCanReachTarget != nullptr)
+		*entryCanReachTarget = canReachTarget;
+
+	if (entryUsesMonkeyToTarget != nullptr)
+		*entryUsesMonkeyToTarget = usesMonkeyToTarget;
+
+	if (!canReachTarget || !usesMonkeyToTarget)
+		return false;
+
+	if (entryCanReachTargetWithoutMonkey != nullptr)
+		*entryCanReachTargetWithoutMonkey = canReachTargetWithoutMonkey;
+
+	return !canReachTargetWithoutMonkey;
+}
+
+static bool TryRouteWithoutMonkey(LOTInfo* LOT, int sourceBox, int targetBox, int searchDepth)
+{
+	if (sourceBox == NO_VALUE || targetBox == NO_VALUE)
+		return false;
+
+	auto testLOT = *LOT;
+	RebuildLOTWithoutMonkey(&testLOT, targetBox, searchDepth);
+	if (!IsNodeInCurrentSearch(&testLOT, sourceBox))
+		return false;
+
+	*LOT = testLOT;
+	return true;
+}
+
+static int GetBoxDistanceSqrToPoint(int boxNumber, const Vector3i& point)
+{
+	if (boxNumber == NO_VALUE)
+		return INT_MAX;
+
+	auto& box = g_Level.PathfindingBoxes[boxNumber];
+	int left = (int)box.top * BLOCK(1);
+	int right = (int)box.bottom * BLOCK(1) - 1;
+	int top = (int)box.left * BLOCK(1);
+	int bottom = (int)box.right * BLOCK(1) - 1;
+	int x = std::clamp(point.x, left, right);
+	int z = std::clamp(point.z, top, bottom);
+
+	return SQUARE(point.x - x) + SQUARE(point.z - z);
+}
+
+static int FindMonkeySwingFallbackBox(ItemInfo* item, ItemInfo* enemy, LOTInfo* LOT, int* candidateCount, int* reachableCount)
+{
+	if (candidateCount != nullptr)
+		*candidateCount = 0;
+
+	if (reachableCount != nullptr)
+		*reachableCount = 0;
+
+	if (!LOT->CanMonkey || item == nullptr || enemy == nullptr || item->BoxNumber == NO_VALUE || enemy->BoxNumber == NO_VALUE || IsMonkeySwingTarget(enemy))
+		return NO_VALUE;
+
+	int bestBox = NO_VALUE;
+	int bestHeightDelta = INT_MAX;
+	bool bestPathUsesMonkey = true;
+	float bestEntryCost = FLT_MAX;
+	int bestDistance = INT_MAX;
+	int searchDepth = (int)g_Level.PathfindingBoxes.size();
+
+	for (int i = 0; i < g_Level.PathfindingBoxes.size(); i++)
+	{
+		if (!IsMonkeySwingEntryBox(i))
+			continue;
+
+		if (candidateCount != nullptr)
+			(*candidateCount)++;
+
+		if (g_Level.PathfindingBoxes[i].flags & LOT->BlockMask)
+			continue;
+
+		if (IsBoxInCooldown(LOT, i))
+			continue;
+
+		LOTInfo testLOT = {};
+		float entryCost = FLT_MAX;
+		bool groundToEntry = CanReachMonkeyEntryOnGround(item, LOT, i, searchDepth, &testLOT, &entryCost);
+		if (!groundToEntry)
+			continue;
+
+		bool usefulEntry = IsUsefulMonkeyEntryForTarget(
+			enemy,
+			LOT,
+			i,
+			searchDepth);
+
+		if (!usefulEntry)
+			continue;
+
+		if (reachableCount != nullptr)
+			(*reachableCount)++;
+
+		if (entryCost == FLT_MAX)
+			continue;
+
+		int heightDelta = abs(g_Level.PathfindingBoxes[i].height - g_Level.PathfindingBoxes[enemy->BoxNumber].height);
+		if (heightDelta > bestHeightDelta)
+			continue;
+
+		bool pathUsesMonkeyToEntry = PathUsesMonkeyOverlap(&testLOT, item->BoxNumber);
+		if (heightDelta == bestHeightDelta && pathUsesMonkeyToEntry && !bestPathUsesMonkey)
+			continue;
+
+		int distance = GetBoxDistanceSqrToPoint(i, enemy->Pose.Position);
+		if (heightDelta == bestHeightDelta && pathUsesMonkeyToEntry == bestPathUsesMonkey && entryCost > bestEntryCost)
+			continue;
+
+		if (heightDelta == bestHeightDelta && pathUsesMonkeyToEntry == bestPathUsesMonkey && entryCost == bestEntryCost && distance >= bestDistance)
+			continue;
+
+		bestBox = i;
+		bestHeightDelta = heightDelta;
+		bestPathUsesMonkey = pathUsesMonkeyToEntry;
+		bestEntryCost = entryCost;
+		bestDistance = distance;
+	}
+
+	return bestBox;
+}
+
+static bool CanReachEnemyThroughMonkeySwing(ItemInfo* item, ItemInfo* enemy, LOTInfo* LOT)
+{
+	if (item == nullptr || enemy == nullptr || LOT == nullptr)
+		return false;
+
+	if (!LOT->CanMonkey || item->BoxNumber == NO_VALUE || enemy->BoxNumber == NO_VALUE)
+		return false;
+
+	int searchDepth = (int)g_Level.PathfindingBoxes.size();
+	if (IsMonkeySwingTarget(enemy))
+	{
+		int targetBox = GetMonkeySwingTargetBox(enemy);
+		if (targetBox == NO_VALUE)
+			return false;
+
+		auto targetLOT = *LOT;
+		targetLOT.CanMonkey = true;
+		ResetLOTSearch(&targetLOT, targetBox);
+		UpdateLOT(&targetLOT, searchDepth);
+
+		return IsNodeInCurrentSearch(&targetLOT, item->BoxNumber) &&
+			PathUsesMonkeyOverlap(&targetLOT, item->BoxNumber);
+	}
+
+	return FindMonkeySwingFallbackBox(item, enemy, LOT, nullptr, nullptr) != NO_VALUE;
+}
+
+static void ClearBadBox(BadBox* badBox)
+{
+	badBox->Valid = false;
+	badBox->BoxNumber = NO_VALUE;
+	badBox->Count = 0;
+}
+
+static int GetMonkeyBadBoxSuppressionBox(ItemInfo* item, CreatureInfo* creature)
+{
+	if (!creature->LOT.CanMonkey || (!creature->MonkeySwingAhead && !creature->LOT.IsMonkeying))
+		return NO_VALUE;
+
+	auto probe = GetPointCollision(*item);
+	int currentBox = item->BoxNumber;
+	if (currentBox == NO_VALUE)
+		currentBox = probe.GetSector().PathfindingBoxID;
+
+	if (!probe.GetBottomSector().Flags.Monkeyswing)
+		return NO_VALUE;
+
+	return currentBox;
+}
+
 /**
  * @brief Updates the creature's bad box memory.
  *
@@ -623,14 +1487,22 @@ static void UpdateBadBoxes(ItemInfo* item)
 	if (!item->IsCreature())
 		return;
 
-	auto& LOT = GetCreatureInfo(item)->LOT;
+	auto* creature = GetCreatureInfo(item);
+	auto& LOT = creature->LOT;
 	int penaltyThreshold = g_GameFlow->GetSettings()->Pathfinding.CollisionPenaltyThreshold * FPS;
 	int penaltyCooldown  = g_GameFlow->GetSettings()->Pathfinding.CollisionPenaltyCooldown  * FPS;
+	int monkeyBadBoxSuppressionBox = GetMonkeyBadBoxSuppressionBox(item, creature);
 
 	for (auto& badBox : LOT.BadBoxes)
 	{
 		if (badBox.BoxNumber == NO_VALUE)
 			continue;
+
+		if (badBox.BoxNumber == monkeyBadBoxSuppressionBox)
+		{
+			ClearBadBox(&badBox);
+			continue;
+		}
 
 		if (badBox.Count > 0)
 		{
@@ -684,6 +1556,7 @@ bool CreaturePathfind(ItemInfo* item, Vector3i prevPos, short angle, short tilt)
 {
 	int xPos, zPos, ceiling, shiftX, shiftZ;
 	short top;
+	bool keepMonkeyRoom = false;
 
 	auto* creature = GetCreatureInfo(item);
 	auto* LOT = &creature->LOT;
@@ -719,7 +1592,7 @@ bool CreaturePathfind(ItemInfo* item, Vector3i prevPos, short angle, short tilt)
 	int nextBox;
 	if (!Objects[item->ObjectNumber].nonLot)
 	{
-		nextBox = LOT->Node[floor->PathfindingBoxID].exitBox;
+		nextBox = IsNodeInCurrentSearch(LOT, floor->PathfindingBoxID) ? LOT->Node[floor->PathfindingBoxID].exitBox : NO_VALUE;
 	}
 	else
 	{
@@ -735,7 +1608,8 @@ bool CreaturePathfind(ItemInfo* item, Vector3i prevPos, short angle, short tilt)
 		nextHeight = g_Level.PathfindingBoxes[nextBox].height;
 
 	bool heightThresholdReached = LOT->Fly == NO_FLYING && !LOT->IsJumping && (boxHeight - height > LOT->Step || boxHeight - height < LOT->Drop);
-	bool zoneIncorrect = item->BoxNumber != NO_VALUE && !LOT->IsJumping && LOT->Zone != ZoneType::Flyer && (zone[item->BoxNumber] != zone[floor->PathfindingBoxID]);
+	bool routeBox = IsNodeInCurrentSearch(LOT, floor->PathfindingBoxID);
+	bool zoneIncorrect = item->BoxNumber != NO_VALUE && !LOT->IsJumping && LOT->Zone != ZoneType::Flyer && !routeBox && (zone[item->BoxNumber] != zone[floor->PathfindingBoxID]);
 
 	// ZONE/STEP/DROP VALIDATION:
 	// If creature moved to invalid floor, push back to sector boundary.
@@ -770,7 +1644,7 @@ bool CreaturePathfind(ItemInfo* item, Vector3i prevPos, short angle, short tilt)
 			height = g_Level.PathfindingBoxes[floor->PathfindingBoxID].height;
 			if (!Objects[item->ObjectNumber].nonLot)
 			{
-				nextBox = LOT->Node[floor->PathfindingBoxID].exitBox;
+				nextBox = IsNodeInCurrentSearch(LOT, floor->PathfindingBoxID) ? LOT->Node[floor->PathfindingBoxID].exitBox : NO_VALUE;
 			}
 			else
 			{
@@ -1048,9 +1922,136 @@ bool CreaturePathfind(ItemInfo* item, Vector3i prevPos, short angle, short tilt)
 
 		if (LOT->IsMonkeying)
 		{
-			// Monkeyswing: stick to ceiling.
-			ceiling = GetCeiling(floor, item->Pose.Position.x, y, item->Pose.Position.z);
-			item->Pose.Position.y = ceiling - bounds.Y1;
+			auto probe = GetPointCollision(*item);
+			int floorSectorBox = floor->PathfindingBoxID;
+			bool floorSectorMonkey = floor->Flags.Monkeyswing;
+			int handCeiling = item->Pose.Position.y + bounds.Y1;
+			int floorSectorCeiling = GetMonkeySwingCeiling(floor, item->Pose.Position.x, y, item->Pose.Position.z, handCeiling);
+			int floorSectorOffset = floorSectorCeiling != NO_HEIGHT ? abs(floorSectorCeiling - handCeiling) : INT_MAX;
+			bool floorSectorRoute = floorSectorMonkey && IsMonkeySwingRouteBox(LOT, floorSectorBox);
+			bool floorSectorSupport = HasMonkeySwingSupport(floorSectorMonkey, floorSectorOffset);
+			auto* currentSector = GetCurrentRoomSector(item);
+			bool currentSectorMonkey = currentSector != nullptr && currentSector->Flags.Monkeyswing;
+			int currentSectorBox = currentSector != nullptr ? currentSector->PathfindingBoxID : NO_VALUE;
+			int currentCeiling = GetMonkeySwingCeiling(currentSector, item->Pose.Position.x, y, item->Pose.Position.z, handCeiling);
+			bool bottomSectorMonkey = probe.GetBottomSector().Flags.Monkeyswing;
+			int bottomSectorBox = probe.GetBottomSector().PathfindingBoxID;
+			int probeCeiling = GetMonkeySwingCeiling(&probe.GetBottomSector(), item->Pose.Position.x, y, item->Pose.Position.z, handCeiling);
+			int currentCeilingOffset = currentCeiling != NO_HEIGHT ? abs(currentCeiling - handCeiling) : INT_MAX;
+			int bottomCeilingOffset = probeCeiling != NO_HEIGHT ? abs(probeCeiling - handCeiling) : INT_MAX;
+			bool currentSectorRoute = currentSectorMonkey && IsMonkeySwingRouteBox(LOT, currentSectorBox);
+			bool bottomSectorRoute = bottomSectorMonkey && IsMonkeySwingRouteBox(LOT, bottomSectorBox);
+			bool currentSectorSupport = HasMonkeySwingSupport(currentSectorMonkey, currentCeilingOffset);
+			bool bottomSectorSupport = HasMonkeySwingSupport(bottomSectorMonkey, bottomCeilingOffset);
+			bool hasMonkeySupport = floorSectorSupport || currentSectorSupport || bottomSectorSupport;
+			int monkeyCeiling = NO_HEIGHT;
+			int monkeyRoom = NO_VALUE;
+			int monkeyCeilingOffset = INT_MAX;
+			int expectedBox = NO_VALUE;
+			int expectedFlags = GetCurrentExitOverlapFlags(LOT, item->BoxNumber, &expectedBox);
+			int expectedRoom = NO_VALUE;
+			int expectedFloor = NO_HEIGHT;
+			int expectedCeiling = NO_HEIGHT;
+			int expectedCeilingOffset = INT_MAX;
+			bool expectedSectorMonkey = false;
+			bool expectedSectorSupport = false;
+			if (floorSectorSupport)
+			{
+				monkeyCeiling = floorSectorCeiling;
+				monkeyRoom = floor->RoomNumber;
+				monkeyCeilingOffset = floorSectorOffset;
+			}
+			if (currentSectorSupport && currentCeilingOffset < monkeyCeilingOffset)
+			{
+				monkeyCeiling = currentCeiling;
+				monkeyRoom = currentSector->RoomNumber;
+				monkeyCeilingOffset = currentCeilingOffset;
+			}
+			if (bottomSectorSupport && bottomCeilingOffset < monkeyCeilingOffset)
+			{
+				monkeyCeiling = probeCeiling;
+				monkeyRoom = item->RoomNumber;
+				monkeyCeilingOffset = bottomCeilingOffset;
+			}
+
+			if (!hasMonkeySupport && (expectedFlags & OVERLAP_MONKEY))
+			{
+				auto* expectedSector = GetBoxSectorAtPosition(expectedBox, item->Pose.Position, &expectedRoom);
+				expectedSectorMonkey = expectedSector != nullptr && expectedSector->Flags.Monkeyswing;
+				if (expectedSectorMonkey)
+				{
+					expectedFloor = GetFloorHeight(expectedSector, item->Pose.Position.x, item->Pose.Position.y, item->Pose.Position.z);
+					expectedCeiling = GetMonkeySwingCeiling(expectedSector, item->Pose.Position.x, y, item->Pose.Position.z, handCeiling);
+					expectedCeilingOffset = expectedCeiling != NO_HEIGHT ? abs(expectedCeiling - handCeiling) : INT_MAX;
+					expectedSectorSupport = HasMonkeySwingSupport(expectedSectorMonkey, expectedCeilingOffset);
+					if (expectedSectorSupport)
+					{
+						hasMonkeySupport = true;
+						monkeyCeiling = expectedCeiling;
+						monkeyRoom = expectedRoom;
+						item->Floor = expectedFloor;
+					}
+				}
+			}
+
+			// Keep hanging across portal-conflicted monkey sectors.
+			if (!hasMonkeySupport && (floorSectorRoute || currentSectorRoute || bottomSectorRoute))
+			{
+				hasMonkeySupport = true;
+				monkeyCeiling = handCeiling;
+				monkeyRoom = item->RoomNumber;
+				monkeyCeilingOffset = 0;
+			}
+
+			if (!hasMonkeySupport &&
+				creature->MonkeySwingAhead &&
+				floorSectorBox != NO_VALUE &&
+				floorSectorBox != item->BoxNumber &&
+				!floorSectorMonkey &&
+				!currentSectorMonkey &&
+				!bottomSectorMonkey)
+			{
+				CooldownBadBox(LOT, floorSectorBox);
+				if (LOT->RequiredBox != NO_VALUE)
+				{
+					ResetLOTSearch(LOT, LOT->RequiredBox);
+					UpdateLOT(LOT, (int)g_Level.PathfindingBoxes.size());
+				}
+
+				item->Pose.Position.x = prevPos.x;
+				item->Pose.Position.z = prevPos.z;
+				roomNumber = item->RoomNumber;
+				auto* rollbackFloor = GetFloor(item->Pose.Position.x, y, item->Pose.Position.z, &roomNumber);
+				int rollbackCeiling = GetMonkeySwingCeiling(rollbackFloor, item->Pose.Position.x, y, item->Pose.Position.z, handCeiling);
+				int rollbackOffset = rollbackCeiling != NO_HEIGHT ? abs(rollbackCeiling - handCeiling) : INT_MAX;
+				bool rollbackSupport = HasMonkeySwingSupport(rollbackFloor != nullptr && rollbackFloor->Flags.Monkeyswing, rollbackOffset);
+				hasMonkeySupport = true;
+				monkeyCeiling = rollbackSupport ? rollbackCeiling : handCeiling;
+				monkeyRoom = rollbackSupport ? rollbackFloor->RoomNumber : item->RoomNumber;
+				monkeyCeilingOffset = rollbackSupport ? rollbackOffset : 0;
+				if (rollbackFloor != nullptr)
+					item->Floor = GetFloorHeight(rollbackFloor, item->Pose.Position.x, item->Pose.Position.y, item->Pose.Position.z);
+			}
+
+			if (!hasMonkeySupport)
+			{
+				LOT->IsMonkeying = false;
+				LOT->IsJumping = false;
+				creature->MonkeySwingAhead = false;
+
+				if (item->ObjectNumber == ID_BADDY1 || item->ObjectNumber == ID_BADDY2)
+					item->Animation.TargetState = BADDY_MONKEY_FALL_LAND_STATE;
+			}
+			else
+			{
+				// Monkeyswing: stick to ceiling.
+				ceiling = monkeyCeiling;
+				item->Pose.Position.y = ceiling - bounds.Y1;
+				if (monkeyRoom != NO_VALUE && monkeyRoom != item->RoomNumber)
+					ItemNewRoom(item->Index, (short)monkeyRoom);
+
+				keepMonkeyRoom = true;
+			}
 		}
 		else
 		{
@@ -1098,7 +2099,8 @@ bool CreaturePathfind(ItemInfo* item, Vector3i prevPos, short angle, short tilt)
 		item->Pose.Orientation.x = 0;
 	}
 
-	UpdateItemRoom(item->Index);
+	if (!keepMonkeyRoom)
+		UpdateItemRoom(item->Index);
 
 	return true;
 }
@@ -1712,6 +2714,77 @@ bool SearchLOT(LOTInfo* LOT, int depth)
 	return SearchLOT_DijkstraAStar(LOT, depth, mode);
 }
 
+static bool CanUseMonkeySwingTransition(LOTInfo* LOT, int targetSideBox, int sourceSideBox, int overlapFlags)
+{
+	if (!(overlapFlags & OVERLAP_MONKEY) || !LOT->CanMonkey)
+		return true;
+
+	bool targetSideMonkey = IsMonkeySwingBox(targetSideBox);
+	bool sourceSideMonkey = IsMonkeySwingBox(sourceSideBox);
+
+	if (targetSideMonkey && sourceSideMonkey)
+		return MonkeySwingBoxesShareEdge(targetSideBox, sourceSideBox);
+
+	if (!LOT->IsMonkeying)
+	{
+		if (sourceSideMonkey && !targetSideMonkey)
+			return IsMonkeySwingExitBox(sourceSideBox);
+
+		return true;
+	}
+
+	if (sourceSideMonkey && !targetSideMonkey)
+		return IsMonkeySwingExitBox(targetSideBox);
+
+	if (!sourceSideMonkey && targetSideMonkey)
+		return IsMonkeySwingExitBox(sourceSideBox);
+
+	return true;
+}
+
+static bool BoxHasStackedVerticalSectors(int boxNumber)
+{
+	if (boxNumber == NO_VALUE)
+		return false;
+
+	for (int i = 0; i < (int)g_Level.Rooms.size(); i++)
+	{
+		const auto& firstRoom = g_Level.Rooms[i];
+		for (const auto& first : firstRoom.Sectors)
+		{
+			if (first.PathfindingBoxID != boxNumber)
+				continue;
+
+			for (int j = i + 1; j < (int)g_Level.Rooms.size(); j++)
+			{
+				const auto& secondRoom = g_Level.Rooms[j];
+				for (const auto& second : secondRoom.Sectors)
+				{
+					if (second.PathfindingBoxID == boxNumber &&
+						second.Position.x == first.Position.x &&
+						second.Position.y == first.Position.y)
+					{
+						return true;
+					}
+				}
+			}
+		}
+	}
+
+	return false;
+}
+
+static bool IsStackedNonMonkeyTransitionBlocked(int fromBox, int toBox)
+{
+	bool fromMonkey = IsMonkeySwingBox(fromBox);
+	bool toMonkey = IsMonkeySwingBox(toBox);
+	if (fromMonkey == toMonkey)
+		return false;
+
+	int nonMonkeyBox = fromMonkey ? toBox : fromBox;
+	return BoxHasStackedVerticalSectors(nonMonkeyBox);
+}
+
 bool CanExpandToBox(LOTInfo* LOT, int fromBox, int toBox, int overlapFlags, int searchZone, const std::vector<int>& zone)
 {
 	if (fromBox == NO_VALUE || toBox == NO_VALUE)
@@ -1724,8 +2797,28 @@ bool CanExpandToBox(LOTInfo* LOT, int fromBox, int toBox, int overlapFlags, int 
 	if (IsBoxInCooldown(LOT, toBox))
 		return false;
 
-	// ZONE CHECK: Only flyer creatures can bypass zone check.
-	if (LOT->Zone != ZoneType::Flyer && searchZone != zone[toBox])
+	bool canUseMonkeyOverlap = (overlapFlags & OVERLAP_MONKEY) && LOT->CanMonkey;
+	int delta = to.height - from.height;
+	if (canUseMonkeyOverlap &&
+		(delta > LOT->Step || delta < LOT->Drop) &&
+		IsStackedNonMonkeyTransitionBlocked(fromBox, toBox))
+	{
+		return false;
+	}
+
+	if (!CanUseMonkeySwingTransition(LOT, fromBox, toBox, overlapFlags))
+		return false;
+
+	if (LOT->CanMonkey &&
+		!canUseMonkeyOverlap &&
+		IsMonkeySwingBox(toBox) &&
+		!IsMonkeySwingExitBox(toBox))
+	{
+		return false;
+	}
+
+	// ZONE CHECK: Flyers and monkey overlaps can cross zone boundaries.
+	if (LOT->Zone != ZoneType::Flyer && searchZone != zone[toBox] && !canUseMonkeyOverlap)
 		return false;
 
 	// AMPHIBIOUS: if the overlap is not traversable, avoid this branch.
@@ -1733,9 +2826,11 @@ bool CanExpandToBox(LOTInfo* LOT, int fromBox, int toBox, int overlapFlags, int 
 		return false;
 
 	// HEIGHT CHECK: Can creature traverse the height difference?
-	int delta = to.height - from.height;
-	if ((delta > LOT->Step || delta < LOT->Drop) && (!(overlapFlags & OVERLAP_MONKEY) || !LOT->CanMonkey))
-		return false;
+	if (delta > LOT->Step || delta < LOT->Drop)
+	{
+		if (!canUseMonkeyOverlap)
+			return false;
+	}
 
 	// JUMP CHECK: Does this overlap require jumping?
 	if ((overlapFlags & OVERLAP_JUMP) && !LOT->CanJump)
@@ -1803,6 +2898,9 @@ bool SearchLOT_BFS(LOTInfo* LOT, int depth)
 					done = true;
 
 				if (!CanExpandToBox(LOT, LOT->Head, boxNumber, flags, searchZone, zone))
+					continue;
+
+				if (!CanContinueMonkeySwingRoute(LOT, boxNumber, LOT->Head, node->exitBox, flags))
 					continue;
 
 				// SEARCH STATE: Check if we've already visited this box.
@@ -1958,6 +3056,9 @@ bool SearchLOT_DijkstraAStar(LOTInfo* LOT, int depth, PathfindingMode mode)
 
 				// Unified traversal checks (zone, cooldown, height, jump, etc).
 				if (!CanExpandToBox(LOT, headBox, boxNumber, flags, searchZone, zone))
+					continue;
+
+				if (!CanContinueMonkeySwingRoute(LOT, boxNumber, headBox, node->exitBox, flags))
 					continue;
 
 				auto* expand = &LOT->Node[boxNumber];
@@ -2413,6 +3514,11 @@ int TargetReachable(ItemInfo* item, ItemInfo* enemy)
 	const auto& creature = *GetCreatureInfo(item);
 	auto& room = g_Level.Rooms[enemy->RoomNumber];
 	auto* floor = GetSector(&room, enemy->Pose.Position.x - room.Position.x, enemy->Pose.Position.z - room.Position.z);
+	int targetBox = floor->PathfindingBoxID;
+	bool targetIsMonkeySwing = creature.LOT.CanMonkey && IsMonkeySwingTarget(enemy);
+
+	if (targetIsMonkeySwing)
+		targetBox = GetMonkeySwingTargetBox(enemy);
 
 	// NEW: Only update enemy box number if it is actually reachable by the enemy.
 	// This prevents enemies from running to the player and attacking nothing when they are hanging or shimmying. -- Lwmte, 27.06.22
@@ -2421,6 +3527,8 @@ int TargetReachable(ItemInfo* item, ItemInfo* enemy)
 	bool isEnemyInWater = TestEnvironment(RoomEnvFlags::ENV_FLAG_WATER, enemy->RoomNumber);
 
 	bool isReachable = false;
+	int enemyFloorHeight = NO_HEIGHT;
+
 	if (creature.LOT.Zone == ZoneType::Flyer)
 	{
 		// Flying creatures can reach any target.
@@ -2433,9 +3541,11 @@ int TargetReachable(ItemInfo* item, ItemInfo* enemy)
 	}
 	else
 	{
-		auto pointColl = GetPointCollision(enemy->Pose.Position, floor->RoomNumber);
+		auto pointColl = GetPointCollision(enemy->Pose.Position, enemy->RoomNumber);
 		auto bounds = GameBoundingBox(item);
-		isReachable = abs(enemy->Pose.Position.y - pointColl.GetFloorHeight()) < bounds.GetHeight();
+		enemyFloorHeight = pointColl.GetFloorHeight();
+
+		isReachable = abs(enemy->Pose.Position.y - enemyFloorHeight) < bounds.GetHeight();
 
 		if (creature.LOT.Zone == ZoneType::Amphibious && isEnemyInWater)
 		{
@@ -2448,19 +3558,40 @@ int TargetReachable(ItemInfo* item, ItemInfo* enemy)
 			if (enemy->IsLara() && TestState(enemy->Animation.ActiveState, JUMP_STATES))
 				isReachable = true;
 		}
+
+		if (targetIsMonkeySwing)
+			isReachable = targetBox != NO_VALUE;
 	}
 
 	// Don't try to chase enemy into bad boxes.
 	for (auto& box : creature.LOT.BadBoxes)
 	{
-		if (box.BoxNumber == floor->PathfindingBoxID && box.Count < 0)
+		if (box.BoxNumber == targetBox && box.Count < 0)
 		{
 			isReachable = false;
 			break;
 		}
 	}
 
-	return (isReachable ? floor->PathfindingBoxID : NO_VALUE);
+	return (isReachable ? targetBox : NO_VALUE);
+}
+
+static int GetCurrentExitOverlapFlags(LOTInfo* LOT, int boxNumber, int* exitBox)
+{
+	if (exitBox != nullptr)
+		*exitBox = NO_VALUE;
+
+	if (!IsNodeInCurrentSearch(LOT, boxNumber))
+		return 0;
+
+	int endBox = LOT->Node[boxNumber].exitBox;
+	if (exitBox != nullptr)
+		*exitBox = endBox;
+
+	if (endBox == NO_VALUE)
+		return 0;
+
+	return GetOverlapFlagsBetweenBoxes(boxNumber, endBox);
 }
 
 /**
@@ -2608,6 +3739,21 @@ void CreatureMood(ItemInfo* item, AI_INFO* AI, bool isViolent)
 	auto* creature = GetCreatureInfo(item);
 	auto* LOT = &creature->LOT;
 	auto* enemy = creature->Enemy.Get();
+	int fullSearchDepth = (int)g_Level.PathfindingBoxes.size();
+	bool keepMonkeyEntryTarget = LOT->CanMonkey &&
+		!LOT->IsMonkeying &&
+		LOT->TargetBox != NO_VALUE &&
+		LOT->RequiredBox == LOT->TargetBox &&
+		(enemy == nullptr || LOT->TargetBox != enemy->BoxNumber) &&
+		IsMonkeySwingEntryBox(LOT->TargetBox) &&
+		item->BoxNumber != LOT->TargetBox &&
+		CanReachMonkeyEntryOnGround(item, LOT, LOT->TargetBox, fullSearchDepth) &&
+		IsUsefulMonkeyEntryForTarget(enemy, LOT, LOT->TargetBox, fullSearchDepth);
+	if (keepMonkeyEntryTarget)
+	{
+		int preferredMonkeyEntryBox = FindMonkeySwingFallbackBox(item, enemy, LOT, nullptr, nullptr);
+		keepMonkeyEntryTarget = preferredMonkeyEntryBox == NO_VALUE || preferredMonkeyEntryBox == LOT->TargetBox;
+	}
 
 	// HACK: Fallback to bored mood from attack or escape mood if enemy was cleared.
 	// Replaces previous "fix" with early exit, because it was breaking friendly NPC pathfinding. -- Lwmte, 24.03.25
@@ -2652,16 +3798,39 @@ void CreatureMood(ItemInfo* item, AI_INFO* AI, bool isViolent)
 
 	case MoodType::Attack:
 	{
-	// Flying creatures target enemy's upper body when enemy is not in water.
-	bool isEnemyOnLand = enemy->IsLara() ?
-		(GetLaraInfo(*enemy).Control.WaterStatus == WaterStatus::Dry) :
-		!TestEnvironment(RoomEnvFlags::ENV_FLAG_WATER, enemy->RoomNumber);
+		if (keepMonkeyEntryTarget)
+			break;
 
-	auto targetOffset = (LOT->Zone == ZoneType::Flyer && isEnemyOnLand) ? Vector3i(0, GetFrame(*enemy).BoundingBox.Y1, 0) : Vector3i::Zero;
-	LOT->Target = PredictTargetPosition(*item, *enemy, targetOffset);
-	LOT->RequiredBox = enemy->BoxNumber;
+		// Flying creatures target enemy's upper body when enemy is not in water.
+		bool isEnemyOnLand = enemy->IsLara() ?
+			(GetLaraInfo(*enemy).Control.WaterStatus == WaterStatus::Dry) :
+			!TestEnvironment(RoomEnvFlags::ENV_FLAG_WATER, enemy->RoomNumber);
 
-	break;
+		auto targetOffset = (LOT->Zone == ZoneType::Flyer && isEnemyOnLand) ? Vector3i(0, GetFrame(*enemy).BoundingBox.Y1, 0) : Vector3i::Zero;
+		auto target = PredictTargetPosition(*item, *enemy, targetOffset);
+		int targetBox = enemy->BoxNumber;
+
+		if (LOT->IsMonkeying && LOT->RequiredBox != targetBox)
+		{
+			auto testLOT = *LOT;
+			auto testTarget = creature->Target;
+
+			testLOT.Target = target;
+			testLOT.RequiredBox = targetBox;
+
+			if (CalculateTarget(&testTarget, item, &testLOT) != TARGET_TYPE::NO_TARGET)
+			{
+				*LOT = testLOT;
+				creature->Target = testTarget;
+			}
+
+			break;
+		}
+
+		LOT->Target = target;
+		LOT->RequiredBox = targetBox;
+
+		break;
 	}
 
 	case MoodType::Escape:
@@ -2722,45 +3891,148 @@ void CreatureMood(ItemInfo* item, AI_INFO* AI, bool isViolent)
 		TargetBox(LOT, item->BoxNumber);
 
 	// Calculate the actual world position to move toward.
-	CalculateTarget(&creature->Target, item, &creature->LOT);
+	auto targetType = CalculateTarget(&creature->Target, item, &creature->LOT);
+	int monkeyFallbackBox = NO_VALUE;
+	bool targetNeedsMonkeySwing = enemy != nullptr && IsMonkeySwingTarget(enemy);
+	bool groundPatrolMood = creature->Mood == MoodType::Bored || creature->Mood == MoodType::Stalk;
+	bool targetIsVerticalPortal = enemy != nullptr &&
+		LOT->CanMonkey &&
+		!LOT->IsMonkeying &&
+		creature->Mood == MoodType::Attack &&
+		!targetNeedsMonkeySwing &&
+		IsVerticalPortalTarget(item, enemy, LOT, AI);
+	bool routeWithoutMonkey = false;
+
+	if (groundPatrolMood &&
+		LOT->CanMonkey &&
+		!LOT->IsMonkeying &&
+		IsNodeInCurrentSearch(LOT, item->BoxNumber) &&
+		PathUsesMonkeyOverlap(LOT, item->BoxNumber))
+	{
+		routeWithoutMonkey = RebuildLOTWithoutMonkey(LOT, LOT->RequiredBox, fullSearchDepth);
+		targetType = CalculateTarget(&creature->Target, item, &creature->LOT);
+
+		if (!routeWithoutMonkey || targetType == TARGET_TYPE::NO_TARGET)
+		{
+			TargetBox(LOT, item->BoxNumber);
+			targetType = CalculateTarget(&creature->Target, item, &creature->LOT);
+		}
+	}
+
+	if (targetIsVerticalPortal && LOT->TargetBox == enemy->BoxNumber)
+		targetType = TARGET_TYPE::NO_TARGET;
+
+	if (targetType == TARGET_TYPE::NO_TARGET && LOT->CanMonkey && enemy != nullptr && creature->Mood == MoodType::Attack)
+	{
+		int searchDepth = (int)g_Level.PathfindingBoxes.size();
+		if (LOT->Head != NO_VALUE)
+		{
+			UpdateLOT(LOT, searchDepth);
+			targetType = CalculateTarget(&creature->Target, item, &creature->LOT);
+		}
+	}
+
+	if (targetIsVerticalPortal && LOT->TargetBox == enemy->BoxNumber)
+		targetType = TARGET_TYPE::NO_TARGET;
+
+	if (targetType == TARGET_TYPE::NO_TARGET && LOT->CanMonkey && enemy != nullptr && creature->Mood == MoodType::Attack)
+	{
+		int searchDepth = (int)g_Level.PathfindingBoxes.size();
+		if (!LOT->IsMonkeying && !targetNeedsMonkeySwing && !targetIsVerticalPortal)
+		{
+			routeWithoutMonkey = TryRouteWithoutMonkey(LOT, item->BoxNumber, enemy->BoxNumber, searchDepth);
+			if (routeWithoutMonkey)
+				targetType = CalculateTarget(&creature->Target, item, &creature->LOT);
+		}
+
+		if (targetType == TARGET_TYPE::NO_TARGET)
+		{
+			monkeyFallbackBox = FindMonkeySwingFallbackBox(item, enemy, LOT, nullptr, nullptr);
+			if (monkeyFallbackBox != NO_VALUE)
+			{
+				TargetBox(LOT, monkeyFallbackBox);
+				RebuildLOTWithoutMonkey(LOT, monkeyFallbackBox, searchDepth);
+				targetType = CalculateTarget(&creature->Target, item, &creature->LOT);
+			}
+		}
+	}
+
+	int firstExitBox = NO_VALUE;
+	int firstExitFlags = GetCurrentExitOverlapFlags(LOT, item->BoxNumber, &firstExitBox);
+	bool needsMonkeyEntry = targetType != TARGET_TYPE::NO_TARGET &&
+		LOT->CanMonkey &&
+		enemy != nullptr &&
+		creature->Mood == MoodType::Attack &&
+		!LOT->IsMonkeying &&
+		!routeWithoutMonkey &&
+		(firstExitFlags & OVERLAP_MONKEY) &&
+		!CanStartMonkeySwingHere(item);
+	if (needsMonkeyEntry)
+	{
+		int searchDepth = (int)g_Level.PathfindingBoxes.size();
+		if (!LOT->IsMonkeying && !targetNeedsMonkeySwing && !targetIsVerticalPortal)
+		{
+			routeWithoutMonkey = TryRouteWithoutMonkey(LOT, item->BoxNumber, enemy->BoxNumber, searchDepth);
+			if (routeWithoutMonkey)
+			{
+				needsMonkeyEntry = false;
+				targetType = CalculateTarget(&creature->Target, item, &creature->LOT);
+			}
+		}
+
+		if (!routeWithoutMonkey)
+		{
+			monkeyFallbackBox = FindMonkeySwingFallbackBox(item, enemy, LOT, nullptr, nullptr);
+			if (monkeyFallbackBox != NO_VALUE && monkeyFallbackBox != LOT->TargetBox)
+			{
+				TargetBox(LOT, monkeyFallbackBox);
+				RebuildLOTWithoutMonkey(LOT, monkeyFallbackBox, searchDepth);
+				targetType = CalculateTarget(&creature->Target, item, &creature->LOT);
+			}
+		}
+	}
+
+	firstExitFlags = GetCurrentExitOverlapFlags(LOT, item->BoxNumber, &firstExitBox);
+	int handCeiling = item->Pose.Position.y + GameBoundingBox(item).Y1;
+	bool currentRouteBox = IsNodeInCurrentSearch(LOT, item->BoxNumber);
+	if (LOT->IsMonkeying &&
+		LOT->RequiredBox != NO_VALUE &&
+		(firstExitFlags & OVERLAP_MONKEY) &&
+		!currentRouteBox &&
+		!HasMonkeySwingBoxAtCeiling(firstExitBox, handCeiling))
+	{
+		CooldownBadBox(LOT, firstExitBox);
+		ResetLOTSearch(LOT, LOT->RequiredBox);
+		targetType = CalculateTarget(&creature->Target, item, &creature->LOT);
+		firstExitFlags = GetCurrentExitOverlapFlags(LOT, item->BoxNumber, &firstExitBox);
+	}
 
 	// CHECK FOR SPECIAL TRAVERSAL on path to next box.
 	// These flags tell the creature AI if it needs to jump or monkeyswing.
 	creature->JumpAhead = false;
 	creature->MonkeySwingAhead = false;
+	creature->PathBlocked = targetType == TARGET_TYPE::NO_TARGET;
 
-	if (item->BoxNumber != NO_VALUE)
+	if (creature->PathBlocked && LOT->Head == NO_VALUE && LOT->TargetBox != item->BoxNumber)
 	{
-		// Get the next box on the path to target.
-		int endBox = LOT->Node[item->BoxNumber].exitBox;
-		if (endBox != NO_VALUE)
-		{
-			// Find the overlap that connects current box to exit box.
-			int overlapIndex = g_Level.PathfindingBoxes[item->BoxNumber].overlapIndex;
-			int nextBox = 0;
-			int flags = 0;
-
-			// Search through overlaps until we find the one leading to exitBox.
-			if (overlapIndex >= 0)
-			{
-				do
-				{
-					nextBox = g_Level.Overlaps[overlapIndex].box;
-					flags = g_Level.Overlaps[overlapIndex++].flags;
-				} while (nextBox != NO_VALUE && ((flags & OVERLAP_END_BIT) == false) && (nextBox != endBox));
-			}
-
-			// If we found the exit overlap, check its traversal flags.
-			if (nextBox == endBox)
-			{
-				if (flags & OVERLAP_JUMP)
-					creature->JumpAhead = true;
-
-				if (flags & OVERLAP_MONKEY)
-					creature->MonkeySwingAhead = true;
-			}
-		}
+		LOT->RequiredBox = NO_VALUE;
+		if (creature->Mood == MoodType::Attack)
+			creature->Mood = MoodType::Bored;
 	}
+
+	bool targetIsMonkeySwing = LOT->CanMonkey && targetNeedsMonkeySwing && IsMonkeySwingBox(LOT->TargetBox);
+	if (targetIsMonkeySwing && item->BoxNumber == LOT->TargetBox)
+		creature->MonkeySwingAhead = true;
+
+	int finalExitBox = NO_VALUE;
+	int exitFlags = GetCurrentExitOverlapFlags(LOT, item->BoxNumber, &finalExitBox);
+
+	if (exitFlags & OVERLAP_JUMP)
+		creature->JumpAhead = true;
+
+	bool suppressMonkeySwingAhead = routeWithoutMonkey && !LOT->IsMonkeying && !targetNeedsMonkeySwing;
+	if ((exitFlags & OVERLAP_MONKEY) && !suppressMonkeySwingAhead)
+		creature->MonkeySwingAhead = true;
 }
 
 /**
@@ -2795,7 +4067,13 @@ void GetCreatureMood(ItemInfo* item, AI_INFO* AI, bool isViolent)
 
 	// Clear target if creature is in a blocked box.
 	if (item->BoxNumber == NO_VALUE || creature->LOT.Node[item->BoxNumber].searchNumber == (creature->LOT.SearchNumber | SEARCH_BLOCKED))
+	{
 		creature->LOT.RequiredBox = NO_VALUE;
+	}
+	else if (LOT->TargetBox != NO_VALUE && LOT->Head == NO_VALUE && !IsNodeInCurrentSearch(LOT, item->BoxNumber))
+	{
+		creature->LOT.RequiredBox = NO_VALUE;
+	}
 
 	// Clear target if it's no longer valid (different zone, blocked, etc.)
 	if (creature->Mood != MoodType::Attack && creature->LOT.RequiredBox != NO_VALUE && !ValidBox(item, AI->zoneNumber, creature->LOT.TargetBox))
@@ -2808,6 +4086,15 @@ void GetCreatureMood(ItemInfo* item, AI_INFO* AI, bool isViolent)
 
 	// Store current mood to detect changes later.
 	auto mood = creature->Mood;
+	bool enemyInSameZone = AI->zoneNumber == AI->enemyZone;
+	bool canTryMonkeyRoute = !enemyInSameZone &&
+		creature->Alerted &&
+		enemy != nullptr &&
+		enemy->BoxNumber != NO_VALUE &&
+		!(AI->enemyZone & BLOCKED) &&
+		CanReachEnemyThroughMonkeySwing(item, enemy, LOT);
+
+	bool canReachEnemy = enemyInSameZone || canTryMonkeyRoute;
 
 	// MOOD DECISION LOGIC
 	// Based on mood override, enemy state, creature state, and zone relationships.
@@ -2835,8 +4122,8 @@ void GetCreatureMood(ItemInfo* item, AI_INFO* AI, bool isViolent)
 			{
 			case MoodType::Bored:
 			case MoodType::Stalk:
-				// Same zone = can reach enemy, so attack immediately.
-				if (AI->zoneNumber == AI->enemyZone)
+				// Reachable enemy = attack immediately.
+				if (canReachEnemy)
 					creature->Mood = MoodType::Attack;
 				// Got hit but can't reach enemy - flee instead.
 				else if (item->HitStatus)
@@ -2845,15 +4132,15 @@ void GetCreatureMood(ItemInfo* item, AI_INFO* AI, bool isViolent)
 				break;
 
 			case MoodType::Attack:
-				// Lost access to enemy's zone - give up and wander.
-				if (AI->zoneNumber != AI->enemyZone)
+				// Lost access to enemy - give up and wander.
+				if (!canReachEnemy)
 					creature->Mood = MoodType::Bored;
 
 				break;
 
 			case MoodType::Escape:
 				// Regained access to enemy - attack again (no stalking for violent).
-				if (AI->zoneNumber == AI->enemyZone)
+				if (canReachEnemy)
 					creature->Mood = MoodType::Attack;
 
 				break;
@@ -2865,14 +4152,14 @@ void GetCreatureMood(ItemInfo* item, AI_INFO* AI, bool isViolent)
 			{
 			case MoodType::Bored:
 			case MoodType::Stalk:
-				if (creature->Alerted && AI->zoneNumber != AI->enemyZone)
+				if (creature->Alerted && !canReachEnemy)
 				{
 					if (AI->distance > BLOCK(3))
 						creature->Mood = MoodType::Stalk;
 					else
 						creature->Mood = MoodType::Bored;
 				}
-				else if (AI->zoneNumber == AI->enemyZone)
+				else if (canReachEnemy)
 				{
 					if (AI->distance < ATTACK_RANGE || (creature->Mood == MoodType::Stalk && LOT->RequiredBox == NO_VALUE))
 						creature->Mood = MoodType::Attack;
@@ -2885,15 +4172,15 @@ void GetCreatureMood(ItemInfo* item, AI_INFO* AI, bool isViolent)
 			case MoodType::Attack:
 				if (item->HitStatus &&
 					(GetRandomControl() < ESCAPE_CHANCE ||
-						AI->zoneNumber != AI->enemyZone))
+						!canReachEnemy))
 					creature->Mood = MoodType::Stalk;
-				else if (AI->zoneNumber != AI->enemyZone && AI->distance > BLOCK(6))
+				else if (!canReachEnemy && AI->distance > BLOCK(6))
 					creature->Mood = MoodType::Bored;
 
 				break;
 
 			case MoodType::Escape:
-				if (AI->zoneNumber == AI->enemyZone && GetRandomControl() < RECOVER_CHANCE)
+				if (canReachEnemy && GetRandomControl() < RECOVER_CHANCE)
 					creature->Mood = MoodType::Stalk;
 
 				break;
@@ -2915,6 +4202,7 @@ void GetCreatureMood(ItemInfo* item, AI_INFO* AI, bool isViolent)
 
 		LOT->RequiredBox = NO_VALUE;
 	}
+
 }
 
 Vector3i PredictTargetPosition(ItemInfo& sourceItem, ItemInfo& targetItem, Vector3i targetOffset)
@@ -3050,6 +4338,9 @@ TARGET_TYPE CalculateTarget(Vector3i* target, ItemInfo* item, LOTInfo* LOT)
 
 	int boxNumber = item->BoxNumber;
 	if (boxNumber == NO_VALUE)
+		return TARGET_TYPE::NO_TARGET;
+
+	if (!IsNodeInCurrentSearch(LOT, boxNumber))
 		return TARGET_TYPE::NO_TARGET;
 
 	auto* box = &g_Level.PathfindingBoxes[boxNumber];

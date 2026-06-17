@@ -58,10 +58,52 @@ The baddy will jump off in the direction he's placed in the map, while the jeep 
 namespace TEN::Entities::TR4
 {
 	constexpr auto BADDY_UZI_AMMO = 24;
+	constexpr auto BADDY_MONKEY_GRAB_CENTER_LERP_DIVISOR = 2;
+	constexpr auto BADDY_MONKEY_GRAB_CENTER_SNAP_DISTANCE = CLICK(0.125f);
 
 	const auto BaddyGunBite	  = CreatureBiteInfo(Vector3(-5, 200, 50), 11);
 	const auto BaddySwordBite = CreatureBiteInfo(Vector3::Zero, 15);
 	const auto BaddySwordAttackJoints = std::vector<unsigned int>{ 14, 15, 16 };
+
+	static bool IsBaddyMonkeySwingEntryHeight(int heightDelta)
+	{
+		return heightDelta >= CLICK(5) && heightDelta <= CLICK(6);
+	}
+
+	static bool IsBaddyMonkeySwingDismountHeight(int heightDelta)
+	{
+		return IsBaddyMonkeySwingEntryHeight(heightDelta);
+	}
+
+	static bool CanBaddyStartMonkeySwing(PointCollisionData* probe)
+	{
+		if (probe == nullptr || !probe->GetBottomSector().Flags.Monkeyswing)
+			return false;
+
+		return IsBaddyMonkeySwingEntryHeight(probe->GetFloorHeight() - probe->GetCeilingHeight());
+	}
+
+	static int LerpBaddyMonkeyGrabCoordinate(int value, int target)
+	{
+		int delta = target - value;
+		if (abs(delta) <= BADDY_MONKEY_GRAB_CENTER_SNAP_DISTANCE)
+			return target;
+
+		return value + delta / BADDY_MONKEY_GRAB_CENTER_LERP_DIVISOR;
+	}
+
+	static void LerpBaddyToMonkeySwingCenter(ItemInfo* item, PointCollisionData* probe)
+	{
+		if (item == nullptr || probe == nullptr)
+			return;
+
+		auto& sector = probe->GetBottomSector();
+		if (!sector.Flags.Monkeyswing)
+			return;
+
+		item->Pose.Position.x = LerpBaddyMonkeyGrabCoordinate(item->Pose.Position.x, sector.Position.x + CLICK(2));
+		item->Pose.Position.z = LerpBaddyMonkeyGrabCoordinate(item->Pose.Position.z, sector.Position.y + CLICK(2));
+	}
 
 	enum BaddyState
 	{
@@ -708,9 +750,8 @@ namespace TEN::Entities::TR4
 				if (creature->MonkeySwingAhead)
 				{
 					probe = GetPointCollision(*item);
-					int heightDelta = probe.GetFloorHeight() - probe.GetCeilingHeight();
 
-					if (probe.GetBottomSector().Flags.Monkeyswing && heightDelta <= CLICK(6) && heightDelta > CLICK(5))
+					if (CanBaddyStartMonkeySwing(&probe))
 					{
 						if (item->TestMeshSwapFlags(MESHSWAPFLAGS_BADDY_EMPTY))
 						{
@@ -795,7 +836,7 @@ namespace TEN::Entities::TR4
 					break;
 				}
 
-				if (creature->MonkeySwingAhead && probe.GetBottomSector().Flags.Monkeyswing)
+				if (creature->MonkeySwingAhead && CanBaddyStartMonkeySwing(&probe))
 				{
 					item->Animation.TargetState = BADDY_STATE_IDLE;
 					break;
@@ -838,8 +879,9 @@ namespace TEN::Entities::TR4
 					break;
 				}
 
-				if ((creature->Mood == MoodType::Attack && !(creature->JumpAhead) && AI.distance > pow(BLOCK(1), 2)) ||
-					 creature->Mood == MoodType::Escape)
+				if (!creature->PathBlocked &&
+					((creature->Mood == MoodType::Attack && !(creature->JumpAhead) && AI.distance > pow(BLOCK(1), 2)) ||
+					 creature->Mood == MoodType::Escape))
 				{
 					item->Animation.TargetState = BADDY_STATE_RUN;
 				}
@@ -852,6 +894,13 @@ namespace TEN::Entities::TR4
 
 				if (AI.ahead)
 					joint3 = AI.angle;
+
+				if (creature->PathBlocked ||
+					(creature->Mood != MoodType::Attack && creature->Mood != MoodType::Escape))
+				{
+					item->Animation.TargetState = BADDY_STATE_IDLE;
+					break;
+				}
 				
 				if (Random::GenerateInt(0, 30) > 20 &&
 					objectNumber == ID_BADDY2 &&
@@ -867,7 +916,7 @@ namespace TEN::Entities::TR4
 				else if ((Targetable(item, &AI) && item->ItemFlags[2] > 0) ||
 					canJump1Sector ||
 					canJump2Sectors ||
-					creature->MonkeySwingAhead ||
+					(creature->MonkeySwingAhead && CanBaddyStartMonkeySwing(&probe)) ||
 					item->AIBits & FOLLOW ||
 					creature->JumpAhead)
 				{
@@ -934,41 +983,74 @@ namespace TEN::Entities::TR4
 
 				break;
 
-			case BADDY_STATE_MONKEY_IDLE:
+			case BADDY_STATE_MONKEY_GRAB:
+			{
 				creature->MaxTurn = 0;
 				creature->Flags = 0;
 				joint1 = 0;
 				joint2 = 0;
 
 				probe = GetPointCollision(*item);
+				if (probe.GetBottomSector().Flags.Monkeyswing &&
+					IsBaddyMonkeySwingEntryHeight(probe.GetFloorHeight() - probe.GetCeilingHeight()))
+				{
+					LerpBaddyToMonkeySwingCenter(item, &probe);
+				}
 
-				if (laraAI.ahead && laraAI.distance < pow(682, 2) &&
-					(LaraItem->Animation.ActiveState == LS_MONKEY_IDLE ||
-						LaraItem->Animation.ActiveState == LS_MONKEY_FORWARD ||
-						LaraItem->Animation.ActiveState == LS_MONKEY_SHIMMY_LEFT ||
-						LaraItem->Animation.ActiveState == LS_MONKEY_SHIMMY_RIGHT ||
-						LaraItem->Animation.ActiveState == LS_MONKEY_TURN_180 ||
-						LaraItem->Animation.ActiveState == LS_MONKEY_TURN_LEFT ||
-						LaraItem->Animation.ActiveState == LS_MONKEY_TURN_RIGHT))
+				break;
+			}
+
+			case BADDY_STATE_MONKEY_IDLE:
+			{
+				creature->MaxTurn = 0;
+				creature->Flags = 0;
+				joint1 = 0;
+				joint2 = 0;
+
+				probe = GetPointCollision(*item);
+				int monkeyIdleFloor = probe.GetFloorHeight();
+				int monkeyIdleCeiling = probe.GetCeilingHeight();
+				bool laraIsMonkeying =
+					LaraItem->Animation.ActiveState == LS_MONKEY_IDLE ||
+					LaraItem->Animation.ActiveState == LS_MONKEY_FORWARD ||
+					LaraItem->Animation.ActiveState == LS_MONKEY_SHIMMY_LEFT ||
+					LaraItem->Animation.ActiveState == LS_MONKEY_SHIMMY_RIGHT ||
+					LaraItem->Animation.ActiveState == LS_MONKEY_TURN_180 ||
+					LaraItem->Animation.ActiveState == LS_MONKEY_TURN_LEFT ||
+					LaraItem->Animation.ActiveState == LS_MONKEY_TURN_RIGHT;
+				bool shouldPushOff = laraAI.ahead && laraAI.distance < pow(682, 2) && laraIsMonkeying;
+				bool shouldMoveForward = (item->BoxNumber != creature->LOT.TargetBox && creature->MonkeySwingAhead) ||
+					!IsBaddyMonkeySwingDismountHeight(monkeyIdleFloor - monkeyIdleCeiling);
+
+				if (shouldPushOff)
 				{
 					item->Animation.TargetState = BADDY_STATE_MONKEY_PUSH_OFF;
 				}
-				else if (item->BoxNumber != creature->LOT.TargetBox &&
-					creature->MonkeySwingAhead ||
-					probe.GetCeilingHeight() != (probe.GetFloorHeight() - CLICK(6)))
+				else if (shouldMoveForward)
 				{
 					item->Animation.TargetState = BADDY_STATE_MONKEY_FORWARD;
 				}
 				else
 				{
 					item->Animation.TargetState = BADDY_STATE_MONKEY_FALL_LAND;
-					creature->LOT.IsMonkeying = false;
-					creature->LOT.IsJumping = false;
 				}
 
 				break;
+			}
 
 			case BADDY_STATE_MONKEY_FORWARD:
+			{
+				if (item->Animation.TargetState == BADDY_STATE_MONKEY_FALL_LAND)
+				{
+					creature->MaxTurn = 0;
+					creature->LOT.IsMonkeying = false;
+					creature->LOT.IsJumping = false;
+					creature->MonkeySwingAhead = false;
+					creature->Flags = 0;
+					SetAnimation(item, BADDY_ANIM_MONKEY_FALL_LAND);
+					break;
+				}
+
 				creature->MaxTurn = ANGLE(7.0f);
 				creature->LOT.IsJumping = true;
 				creature->LOT.IsMonkeying = true;
@@ -980,7 +1062,11 @@ namespace TEN::Entities::TR4
 				{
 					probe = GetPointCollision(*item);
 
-					if (probe.GetCeilingHeight() == probe.GetFloorHeight() - CLICK(6))
+					if (!probe.GetBottomSector().Flags.Monkeyswing)
+					{
+						item->Animation.TargetState = BADDY_STATE_MONKEY_FALL_LAND;
+					}
+					else if (IsBaddyMonkeySwingDismountHeight(probe.GetFloorHeight() - probe.GetCeilingHeight()))
 						item->Animation.TargetState = BADDY_STATE_MONKEY_IDLE;
 				}
 
@@ -1001,6 +1087,14 @@ namespace TEN::Entities::TR4
 					}
 				}
 
+				break;
+			}
+
+			case BADDY_STATE_MONKEY_FALL_LAND:
+				creature->MaxTurn = 0;
+				creature->LOT.IsMonkeying = false;
+				creature->LOT.IsJumping = false;
+				creature->Flags = 0;
 				break;
 
 			case BADDY_STATE_MONKEY_PUSH_OFF:
