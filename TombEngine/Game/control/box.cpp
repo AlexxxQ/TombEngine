@@ -95,6 +95,12 @@ struct MonkeySwingSectorInfo
 	int Ceiling = NO_HEIGHT;
 };
 
+struct PathfindingBoxColumn
+{
+	int X = 0;
+	int Z = 0;
+};
+
 struct MonkeySwingBoxCache
 {
 	bool Initialized = false;
@@ -104,7 +110,9 @@ struct MonkeySwingBoxCache
 	int SectorCount = 0;
 	std::vector<unsigned char> MonkeyBoxes = {};
 	std::vector<unsigned char> ExitBoxes = {};
+	std::vector<unsigned char> StackedVerticalBoxes = {};
 	std::vector<std::vector<MonkeySwingSectorInfo>> BoxSectors = {};
+	std::vector<std::vector<const FloorInfo*>> BoxSectorRefs = {};
 };
 
 static MonkeySwingBoxCache MonkeySwingBoxCacheData = {};
@@ -841,17 +849,37 @@ static void BuildMonkeySwingBoxCache()
 	MonkeySwingBoxCacheData.SectorCount = sectorCount;
 	MonkeySwingBoxCacheData.MonkeyBoxes.assign(boxCount, 0);
 	MonkeySwingBoxCacheData.ExitBoxes.assign(boxCount, 0);
+	MonkeySwingBoxCacheData.StackedVerticalBoxes.assign(boxCount, 0);
 	MonkeySwingBoxCacheData.BoxSectors.assign(boxCount, {});
+	MonkeySwingBoxCacheData.BoxSectorRefs.assign(boxCount, {});
+
+	std::vector<std::vector<PathfindingBoxColumn>> boxColumns(boxCount);
 
 	for (const auto& room : g_Level.Rooms)
 	{
 		for (const auto& sector : room.Sectors)
 		{
 			int boxNumber = sector.PathfindingBoxID;
-			if (boxNumber == NO_VALUE || !sector.Flags.Monkeyswing)
+			if (boxNumber == NO_VALUE)
 				continue;
 
 			if (boxNumber < 0 || boxNumber >= boxCount)
+				continue;
+
+			MonkeySwingBoxCacheData.BoxSectorRefs[boxNumber].push_back(&sector);
+
+			for (const auto& column : boxColumns[boxNumber])
+			{
+				if (column.X == sector.Position.x && column.Z == sector.Position.y)
+				{
+					MonkeySwingBoxCacheData.StackedVerticalBoxes[boxNumber] = 1;
+					break;
+				}
+			}
+
+			boxColumns[boxNumber].push_back({ sector.Position.x, sector.Position.y });
+
+			if (!sector.Flags.Monkeyswing)
 				continue;
 
 			MonkeySwingBoxCacheData.MonkeyBoxes[boxNumber] = 1;
@@ -2744,34 +2772,11 @@ static bool CanUseMonkeySwingTransition(LOTInfo* LOT, int targetSideBox, int sou
 
 static bool BoxHasStackedVerticalSectors(int boxNumber)
 {
-	if (boxNumber == NO_VALUE)
+	if (boxNumber == NO_VALUE || boxNumber < 0 || boxNumber >= (int)g_Level.PathfindingBoxes.size())
 		return false;
 
-	for (int i = 0; i < (int)g_Level.Rooms.size(); i++)
-	{
-		const auto& firstRoom = g_Level.Rooms[i];
-		for (const auto& first : firstRoom.Sectors)
-		{
-			if (first.PathfindingBoxID != boxNumber)
-				continue;
-
-			for (int j = i + 1; j < (int)g_Level.Rooms.size(); j++)
-			{
-				const auto& secondRoom = g_Level.Rooms[j];
-				for (const auto& second : secondRoom.Sectors)
-				{
-					if (second.PathfindingBoxID == boxNumber &&
-						second.Position.x == first.Position.x &&
-						second.Position.y == first.Position.y)
-					{
-						return true;
-					}
-				}
-			}
-		}
-	}
-
-	return false;
+	BuildMonkeySwingBoxCache();
+	return MonkeySwingBoxCacheData.StackedVerticalBoxes[boxNumber] != 0;
 }
 
 static bool IsStackedNonMonkeyTransitionBlocked(int fromBox, int toBox)
@@ -2783,6 +2788,111 @@ static bool IsStackedNonMonkeyTransitionBlocked(int fromBox, int toBox)
 
 	int nonMonkeyBox = fromMonkey ? toBox : fromBox;
 	return BoxHasStackedVerticalSectors(nonMonkeyBox);
+}
+
+static bool SectorsShareGroundEdge(const FloorInfo& first, const FloorInfo& second)
+{
+	bool shareXEdge = first.Position.y == second.Position.y &&
+		(first.Position.x + BLOCK(1) == second.Position.x || second.Position.x + BLOCK(1) == first.Position.x);
+	bool shareZEdge = first.Position.x == second.Position.x &&
+		(first.Position.y + BLOCK(1) == second.Position.y || second.Position.y + BLOCK(1) == first.Position.y);
+
+	return shareXEdge || shareZEdge;
+}
+
+static bool SectorsShareColumn(const FloorInfo& first, const FloorInfo& second)
+{
+	return first.Position.x == second.Position.x && first.Position.y == second.Position.y;
+}
+
+static bool SectorsConnectByVerticalPortal(const FloorInfo& first, const FloorInfo& second)
+{
+	if (!SectorsShareColumn(first, second))
+		return false;
+
+	for (const auto& triangle : first.FloorSurface.Triangles)
+		if (triangle.PortalRoomNumber == second.RoomNumber)
+			return true;
+
+	for (const auto& triangle : first.CeilingSurface.Triangles)
+		if (triangle.PortalRoomNumber == second.RoomNumber)
+			return true;
+
+	for (const auto& triangle : second.FloorSurface.Triangles)
+		if (triangle.PortalRoomNumber == first.RoomNumber)
+			return true;
+
+	for (const auto& triangle : second.CeilingSurface.Triangles)
+		if (triangle.PortalRoomNumber == first.RoomNumber)
+			return true;
+
+	return false;
+}
+
+static bool SectorsConnectBySidePortal(const FloorInfo& first, const FloorInfo& second)
+{
+	if (first.SidePortalRoomNumber != second.RoomNumber && second.SidePortalRoomNumber != first.RoomNumber)
+		return false;
+
+	return SectorsShareGroundEdge(first, second) || SectorsShareColumn(first, second);
+}
+
+static bool BoxesShareGroundConnection(int firstBox, int secondBox)
+{
+	if (firstBox == secondBox)
+		return true;
+
+	BuildMonkeySwingBoxCache();
+
+	if (firstBox < 0 || secondBox < 0 ||
+		firstBox >= (int)MonkeySwingBoxCacheData.BoxSectorRefs.size() ||
+		secondBox >= (int)MonkeySwingBoxCacheData.BoxSectorRefs.size())
+	{
+		return true;
+	}
+
+	const auto& firstSectors = MonkeySwingBoxCacheData.BoxSectorRefs[firstBox];
+	const auto& secondSectors = MonkeySwingBoxCacheData.BoxSectorRefs[secondBox];
+	if (firstSectors.empty() || secondSectors.empty())
+		return true;
+
+	for (const auto* firstSector : firstSectors)
+	{
+		for (const auto* secondSector : secondSectors)
+		{
+			if (firstSector->RoomNumber == secondSector->RoomNumber && SectorsShareGroundEdge(*firstSector, *secondSector))
+				return true;
+
+			if (SectorsConnectBySidePortal(*firstSector, *secondSector) ||
+				SectorsConnectByVerticalPortal(*firstSector, *secondSector))
+			{
+				return true;
+			}
+		}
+	}
+
+	return false;
+}
+
+static bool CanTraverseOnGround(LOTInfo* LOT, int fromBox, int toBox)
+{
+	if (LOT == nullptr || fromBox == NO_VALUE || toBox == NO_VALUE)
+		return false;
+
+	if (fromBox < 0 || toBox < 0 ||
+		fromBox >= (int)g_Level.PathfindingBoxes.size() ||
+		toBox >= (int)g_Level.PathfindingBoxes.size())
+	{
+		return false;
+	}
+
+	const auto& from = g_Level.PathfindingBoxes[fromBox];
+	const auto& to = g_Level.PathfindingBoxes[toBox];
+	int delta = to.height - from.height;
+	if (delta > LOT->Step || delta < LOT->Drop)
+		return false;
+
+	return BoxesShareGroundConnection(fromBox, toBox);
 }
 
 bool CanExpandToBox(LOTInfo* LOT, int fromBox, int toBox, int overlapFlags, int searchZone, const std::vector<int>& zone)
@@ -2798,13 +2908,15 @@ bool CanExpandToBox(LOTInfo* LOT, int fromBox, int toBox, int overlapFlags, int 
 		return false;
 
 	bool canUseMonkeyOverlap = (overlapFlags & OVERLAP_MONKEY) && LOT->CanMonkey;
+	bool isSpecialOverlap = (overlapFlags & (OVERLAP_MONKEY | OVERLAP_JUMP | OVERLAP_AMPHIBIOUS_TRAVERSABLE)) != 0;
+	if (!isSpecialOverlap && !BoxesShareGroundConnection(fromBox, toBox))
+		return false;
+
 	int delta = to.height - from.height;
 	if (canUseMonkeyOverlap &&
 		(delta > LOT->Step || delta < LOT->Drop) &&
 		IsStackedNonMonkeyTransitionBlocked(fromBox, toBox))
-	{
 		return false;
-	}
 
 	if (!CanUseMonkeySwingTransition(LOT, fromBox, toBox, overlapFlags))
 		return false;
@@ -2813,9 +2925,7 @@ bool CanExpandToBox(LOTInfo* LOT, int fromBox, int toBox, int overlapFlags, int 
 		!canUseMonkeyOverlap &&
 		IsMonkeySwingBox(toBox) &&
 		!IsMonkeySwingExitBox(toBox))
-	{
 		return false;
-	}
 
 	// ZONE CHECK: Flyers and monkey overlaps can cross zone boundaries.
 	if (LOT->Zone != ZoneType::Flyer && searchZone != zone[toBox] && !canUseMonkeyOverlap)
@@ -4026,11 +4136,14 @@ void CreatureMood(ItemInfo* item, AI_INFO* AI, bool isViolent)
 
 	int finalExitBox = NO_VALUE;
 	int exitFlags = GetCurrentExitOverlapFlags(LOT, item->BoxNumber, &finalExitBox);
-
 	if (exitFlags & OVERLAP_JUMP)
 		creature->JumpAhead = true;
 
-	bool suppressMonkeySwingAhead = routeWithoutMonkey && !LOT->IsMonkeying && !targetNeedsMonkeySwing;
+	bool suppressMonkeySwingAhead =
+		!LOT->IsMonkeying &&
+		(!targetNeedsMonkeySwing || !IsMonkeySwingBox(LOT->TargetBox)) &&
+		((routeWithoutMonkey && !targetNeedsMonkeySwing) ||
+		 CanTraverseOnGround(LOT, item->BoxNumber, finalExitBox));
 	if ((exitFlags & OVERLAP_MONKEY) && !suppressMonkeySwingAhead)
 		creature->MonkeySwingAhead = true;
 }
