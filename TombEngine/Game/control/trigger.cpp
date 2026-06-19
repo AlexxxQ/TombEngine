@@ -37,6 +37,19 @@ using namespace TEN::Utils;
 int TriggerTimer;
 int KeyTriggerActive;
 
+namespace
+{
+	bool IsSwitchActiveState(const ItemInfo& item)
+	{
+		return item.Animation.ActiveState == (item.ObjectNumber == ID_JUMP_SWITCH ? SWITCH_ON : SWITCH_OFF);
+	}
+
+	bool IsSwitchInactiveState(const ItemInfo& item)
+	{
+		return item.Animation.ActiveState == (item.ObjectNumber == ID_JUMP_SWITCH ? SWITCH_OFF : SWITCH_ON);
+	}
+}
+
 int TriggerActive(ItemInfo* item)
 {
 	int flag = (~item->Flags & IFLAG_REVERSE) >> 14;
@@ -187,9 +200,7 @@ bool SwitchTrigger(short itemNumber, short timer)
 	// Handle switches.
 	if (item.Status == ITEM_DEACTIVATED)
 	{
-		if (((item.Animation.ActiveState == SWITCH_OFF && item.ObjectNumber != ID_JUMP_SWITCH) ||
-			 (item.Animation.ActiveState == SWITCH_ON && item.ObjectNumber == ID_JUMP_SWITCH)) &&
-			timer > 0)
+		if (IsSwitchActiveState(item) && timer > 0)
 		{
 			item.Timer = timer;
 			item.Status = ITEM_ACTIVE;
@@ -200,7 +211,7 @@ bool SwitchTrigger(short itemNumber, short timer)
 			return true;
 		}
 	
-		if (item.TriggerFlags >= 0 || item.Animation.ActiveState != SWITCH_OFF)
+		if (item.TriggerFlags >= 0 || !IsSwitchActiveState(item))
 		{
 			RemoveActiveItem(itemNumber);
 
@@ -495,7 +506,7 @@ void TestTriggers(int x, int y, int z, FloorInfo* floor, Activator activator, bo
 			if (!SwitchTrigger(value, timer))
 				return;
 
-			switchOff = (triggerType == TRIGGER_TYPES::SWITCH && timer && g_Level.Items[value].Animation.ActiveState == 1);
+			switchOff = (triggerType == TRIGGER_TYPES::SWITCH && timer && IsSwitchInactiveState(g_Level.Items[value]));
 			break;
 
 		case TRIGGER_TYPES::MONKEY:

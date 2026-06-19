@@ -161,7 +161,7 @@ void StartSwitches(ObjectInfo* object)
 	if (object->loaded)
 	{
 		object->collision = JumpSwitchCollision;
-		object->control = SwitchControl;
+		object->control = JumpSwitchControl;
 		object->SetHitEffect(true);
 	}
 

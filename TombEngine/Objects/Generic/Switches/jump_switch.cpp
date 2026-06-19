@@ -1,8 +1,10 @@
 #include "framework.h"
 #include "Objects/Generic/Switches/jump_switch.h"
 
+#include "Game/Animation/Animation.h"
 #include "Game/collision/collide_item.h"
 #include "Game/control/control.h"
+#include "Game/control/trigger.h"
 #include "Game/Hud/Hud.h"
 #include "Game/items.h"
 #include "Game/Lara/lara.h"
@@ -11,6 +13,7 @@
 #include "Specific/Input/Input.h"
 #include "Specific/level.h"
 
+using namespace TEN::Animation;
 using namespace TEN::Hud;
 using namespace TEN::Input;
 
@@ -30,19 +33,40 @@ namespace TEN::Entities::Switches
 	};
 	const auto JumpSwitchPos = Vector3i(0, -208, 256);
 
+	void JumpSwitchControl(short itemNumber)
+	{
+		auto* switchItem = &g_Level.Items[itemNumber];
+
+		switchItem->Flags |= CODE_BITS;
+
+		if (!TriggerActive(switchItem) && !(switchItem->Flags & IFLAG_INVISIBLE))
+		{
+			switchItem->Animation.TargetState = SWITCH_OFF;
+			switchItem->Timer = 0;
+			AnimateItem(switchItem);
+		}
+
+		AnimateItem(switchItem);
+	}
+
 	void JumpSwitchCollision(short itemNumber, ItemInfo* laraItem, CollisionInfo* coll)
 	{
 		auto* laraInfo = GetLaraInfo(laraItem);
 		auto* switchItem = &g_Level.Items[itemNumber];
 
-		g_Hud.InteractionHighlighter.Test(*laraItem, *switchItem, InteractionMode::Activation);
+		bool isSwitchAvailable =
+			switchItem->Status == ITEM_NOT_ACTIVE &&
+			switchItem->Animation.ActiveState == SWITCH_OFF;
 
-		if (IsHeld(In::Action) &&
+		if (isSwitchAvailable)
+			g_Hud.InteractionHighlighter.Test(*laraItem, *switchItem, InteractionMode::Activation);
+
+		if (isSwitchAvailable &&
+			IsHeld(In::Action) &&
 			(laraItem->Animation.ActiveState == LS_REACH || laraItem->Animation.ActiveState == LS_JUMP_UP) &&
 			(laraItem->Status || laraItem->Animation.IsAirborne) &&
 			laraItem->Animation.Velocity.y > 0 &&
-			laraInfo->Control.HandStatus == HandStatus::Free &&
-			switchItem->Animation.ActiveState == SWITCH_OFF)
+			laraInfo->Control.HandStatus == HandStatus::Free)
 		{
 			if (TestLaraPosition(JumpSwitchBounds, switchItem, laraItem))
 			{
