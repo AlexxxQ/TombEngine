@@ -180,6 +180,16 @@ void DrawLaraPathfinding(int boxIndex)
 
 	DrawBox(boxIndex, currentBoxColor);
 
+	// FLIPMAP-AWARE OVERLAP FILTER.
+	//
+	// The compiler bakes both flip-state overlaps into a single chain per box
+	// but tags each entry with OVERLAP_UNFLIPPED_VALID / OVERLAP_FLIPPED_VALID
+	// per the pass that found the adjacency valid. Mirror the runtime BFS
+	// filter (CanExpandToBox) here so the visualization shows exactly which
+	// neighbours are reachable in the current FlipStatus.
+	int validBit = FlipStatus ? OVERLAP_FLIPPED_VALID : OVERLAP_UNFLIPPED_VALID;
+	int validMask = OVERLAP_UNFLIPPED_VALID | OVERLAP_FLIPPED_VALID;
+
 	// Draw overlapping boxes.
 	while (true)
 	{
@@ -188,7 +198,14 @@ void DrawLaraPathfinding(int boxIndex)
 
 		auto overlap = g_Level.Overlaps[index];
 
-		DrawBox(overlap.box, Vector3(1, 1, 0));
+		// Skip entries from the opposite flip pass. Untagged entries (zero
+		// validity bits) come from legacy compiles and are drawn for
+		// backwards compatibility.
+		bool flipMatches = (overlap.flags & validMask) == 0 ||
+		                   (overlap.flags & validBit) != 0;
+
+		if (flipMatches)
+			DrawBox(overlap.box, Vector3(1, 1, 0));
 
 		if (overlap.flags & OVERLAP_END_BIT)
 			break;
@@ -1719,6 +1736,19 @@ bool CanExpandToBox(LOTInfo* LOT, int fromBox, int toBox, int overlapFlags, int 
 
 	auto& from = g_Level.PathfindingBoxes[fromBox];
 	auto& to   = g_Level.PathfindingBoxes[toBox];
+
+	// FLIP-STATE VALIDITY: the compiler bakes both unflipped and flipped
+	// adjacency results into a single overlap chain per box, tagging each
+	// entry with which flip state it was found valid in. Skip entries that
+	// don't carry the bit matching the current FlipStatus -- this is how a
+	// Pass 1 base-geometry overlap (e.g. open passage in base) is prevented
+	// from being used in flipped state where alt geometry adds a wall.
+	// Untagged entries (both validity bits zero) come from legacy compiles
+	// and are accepted in both states for backwards compatibility.
+	int validBit = FlipStatus ? OVERLAP_FLIPPED_VALID : OVERLAP_UNFLIPPED_VALID;
+	int validMask = OVERLAP_UNFLIPPED_VALID | OVERLAP_FLIPPED_VALID;
+	if ((overlapFlags & validMask) != 0 && (overlapFlags & validBit) == 0)
+		return false;
 
 	// PENALTY CHECK: Ignore box, if it is memorized as bad.
 	if (IsBoxInCooldown(LOT, toBox))

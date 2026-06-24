@@ -682,8 +682,41 @@ void DoFlipMap(int group)
 	FlipStatus =
 	FlipStats[group] = !FlipStats[group];
 
+	// Invalidate every active creature's cached pathfinding flow field. The Node[]
+	// array stores exitBox / searchNumber from previous BFS runs that reflect the
+	// PRE-flip sector-to-box mapping. After a flipmap toggle, sectors point to
+	// different boxes (alt versions replace base ones), so old exitBox chains lead
+	// creatures along stale paths -- they walk into sectors whose floor heights
+	// changed and trigger HEIGHT_STEP_DROP push-back. Clearing exitBox forces the
+	// next pathfinding call to re-flood from scratch using the new flip state's
+	// zones/overlaps. This also fixes the "old red sectors briefly visible" symptom
+	// in the debug path visualization.
 	for (auto creatureIndex : ActiveCreatures)
-		GetCreatureInfo(&g_Level.Items[creatureIndex])->LOT.TargetBox = NO_VALUE;
+	{
+		auto& item = g_Level.Items[creatureIndex];
+		auto* creature = GetCreatureInfo(&item);
+		auto& lot = creature->LOT;
+
+		lot.TargetBox   = NO_VALUE;
+		lot.RequiredBox = NO_VALUE;
+		lot.Head        = NO_VALUE;
+		lot.Tail        = NO_VALUE;
+
+		for (auto& node : lot.Node)
+		{
+			node.exitBox       = NO_VALUE;
+			node.searchNumber  = 0;
+			node.nextExpansion = NO_VALUE;
+			node.cost          = FLT_MAX;
+		}
+
+		// Refresh the creature's current box from its position. The sector under the
+		// creature may now belong to a different (alt-side) box.
+		auto* room = &g_Level.Rooms[item.RoomNumber];
+		item.BoxNumber = GetSector(room,
+			item.Pose.Position.x - room->Position.x,
+			item.Pose.Position.z - room->Position.z)->PathfindingBoxID;
+	}
 }
 
 bool IsObjectInRoom(int roomNumber, GAME_OBJECT_ID objectID)
