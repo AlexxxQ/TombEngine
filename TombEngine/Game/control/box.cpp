@@ -180,13 +180,8 @@ void DrawLaraPathfinding(int boxIndex)
 
 	DrawBox(boxIndex, currentBoxColor);
 
-	// FLIPMAP-AWARE OVERLAP FILTER.
-	//
-	// The compiler bakes both flip-state overlaps into a single chain per box
-	// but tags each entry with OVERLAP_UNFLIPPED_VALID / OVERLAP_FLIPPED_VALID
-	// per the pass that found the adjacency valid. Mirror the runtime BFS
-	// filter (CanExpandToBox) here so the visualization shows exactly which
-	// neighbours are reachable in the current FlipStatus.
+	// FLIPMAP OVERLAP FILTER(debug visualization).
+	// validBit = flip bit required by current FlipStatus; validMask = both bits (tagged vs legacy).
 	int validBit = FlipStatus ? OVERLAP_FLIPPED_VALID : OVERLAP_UNFLIPPED_VALID;
 	int validMask = OVERLAP_UNFLIPPED_VALID | OVERLAP_FLIPPED_VALID;
 
@@ -198,9 +193,7 @@ void DrawLaraPathfinding(int boxIndex)
 
 		auto overlap = g_Level.Overlaps[index];
 
-		// Skip entries from the opposite flip pass. Untagged entries (zero
-		// validity bits) come from legacy compiles and are drawn for
-		// backwards compatibility.
+		// Debug:Show the neighbour box only if its overlap is valid in the current FlipStatus.
 		bool flipMatches = (overlap.flags & validMask) == 0 ||
 		                   (overlap.flags & validBit) != 0;
 
@@ -1737,14 +1730,7 @@ bool CanExpandToBox(LOTInfo* LOT, int fromBox, int toBox, int overlapFlags, int 
 	auto& from = g_Level.PathfindingBoxes[fromBox];
 	auto& to   = g_Level.PathfindingBoxes[toBox];
 
-	// FLIP-STATE VALIDITY: the compiler bakes both unflipped and flipped
-	// adjacency results into a single overlap chain per box, tagging each
-	// entry with which flip state it was found valid in. Skip entries that
-	// don't carry the bit matching the current FlipStatus -- this is how a
-	// Pass 1 base-geometry overlap (e.g. open passage in base) is prevented
-	// from being used in flipped state where alt geometry adds a wall.
-	// Untagged entries (both validity bits zero) come from legacy compiles
-	// and are accepted in both states for backwards compatibility.
+	// FLIP-STATE VALIDITY: Block this step if the overlap is tagged invalid for the current FlipStatus (untagged legacy = allowed).
 	int validBit = FlipStatus ? OVERLAP_FLIPPED_VALID : OVERLAP_UNFLIPPED_VALID;
 	int validMask = OVERLAP_UNFLIPPED_VALID | OVERLAP_FLIPPED_VALID;
 	if ((overlapFlags & validMask) != 0 && (overlapFlags & validBit) == 0)
