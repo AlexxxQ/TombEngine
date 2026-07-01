@@ -658,6 +658,9 @@ void ResetRoomData()
 		g_Level.PathfindingBoxes[pathfindingBoxID].flags &= ~BLOCKED;
 }
 
+// Defined in box.cpp: rebuilds the pathfinding zone table for the current flip combination.
+void RecomputeRuntimeZones();
+
 void DoFlipMap(int group)
 {
 	if (group >= MAX_FLIPMAP)
@@ -681,6 +684,11 @@ void DoFlipMap(int group)
 
 	FlipStatus =
 	FlipStats[group] = !FlipStats[group];
+
+	// Rebuild the pathfinding zone table for the NEW flip combination, so a creature in a
+	// non-flipped room and a target in this (now flipped) group resolve consistent zones.
+	// Must run after FlipStats is updated and before creatures re-flood below.
+	RecomputeRuntimeZones();
 
 	// Invalidate every active creature's cached pathfinding flow field. The Node[]
 	// array stores exitBox / searchNumber from previous BFS runs that reflect the

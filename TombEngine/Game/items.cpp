@@ -1018,7 +1018,12 @@ void UpdateAllEffects()
 bool UpdateItemRoom(short itemNumber)
 {
 	auto* item = &g_Level.Items[itemNumber];
-	auto yOffset = GameBoundingBox(item).GetCenter().y;
+	auto bounds = GameBoundingBox(item);
+
+	// Small creatures can stand on thin ceiling slabs above vertical portals.
+	// Their bbox center may resolve to the room below, while the top of the body
+	// stays in the slab's real room.
+	int yOffset = (-bounds.Y1 < CLICK(2)) ? bounds.Y1 : (int)bounds.GetCenter().y;
 
 	auto roomNumber = GetPointCollision(
 		Vector3i(item->Pose.Position.x, item->Pose.Position.y + yOffset, item->Pose.Position.z),

@@ -1871,7 +1871,7 @@ namespace TEN::Renderer
 					auto& enemy = g_Level.Items[creatures[PathfindingDisplayIndex]];
 					auto* creatureInfo = (CreatureInfo*)enemy.Data;
 					auto zoneType = creatureInfo->LOT.Zone;
-					auto& zones = g_Level.Zones[(int)zoneType][(int)FlipStatus];
+					const auto& zones = GetRuntimeZoneTable((int)zoneType);
 
 					PrintDebugMessage("Player zone number: %d", playerBoxID == NO_VALUE ? NO_VALUE : zones[playerBoxID]);
 					PrintDebugMessage("Enemy: %s", enemy.Name.c_str());

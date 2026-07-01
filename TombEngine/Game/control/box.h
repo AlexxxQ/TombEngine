@@ -86,6 +86,14 @@ constexpr auto SEARCH_BLOCKED = (1 << 31);
 
 constexpr auto BOX_WATER   = 0x0200;
 constexpr auto BOX_SHALLOW = 0x0400;
+constexpr auto BOX_SLOPE   = 0x0800;  // Steep floor; exported by the compiler so the runtime zone
+                                      // re-flood can reproduce the land slope filter.
+
+constexpr auto BOX_FLIP_GROUP_SHIFT  = 16;
+constexpr auto BOX_FLIP_GROUP_MASK   = 0x01FF0000; // 9 bits: stored as group + 1, 0 = no group.
+constexpr auto BOX_FLIP_NATIVE_SHIFT = 25;
+constexpr auto BOX_FLIP_NATIVE_MASK  = 0x06000000; // 0 = base-only, 1 = alt-only, 2 = both.
+constexpr auto BOX_FLIP_METADATA     = 0x08000000;
 
 // FLIP-STATE VALIDITY (compiler-baked, runtime BFS filter).
 // Each overlap entry carries one or both flags depending on which compiler pass
@@ -151,7 +159,7 @@ bool UpdateLOT(LOTInfo* LOT, int expansion);
 bool SearchLOT(LOTInfo* LOT, int expansion);
 bool SearchLOT_BFS(LOTInfo* LOT, int depth);
 bool SearchLOT_DijkstraAStar(LOTInfo* LOT, int depth, PathfindingMode mode);
-bool CanExpandToBox(LOTInfo* LOT, int fromBox, int toBox, int overlapFlags, int searchZone, const std::vector<int>& zone);
+bool CanExpandToBox(LOTInfo* LOT, int fromBox, int toBox, int overlapFlags, int searchZone, const std::vector<int>& zone, bool liveEdge);
 bool CreatureActive(short itemNumber);
 void InitializeCreature(short itemNumber);
 bool StalkBox(ItemInfo* item, ItemInfo* enemy, int boxNumber);
@@ -162,6 +170,16 @@ bool CreatureAnimation(short itemNumber, short headingAngle, short tiltAngle);
 void CreatureHealth(ItemInfo* item);
 void AdjustStopperFlag(ItemInfo* item, int direction);
 void InitializeItemBoxData();
+
+// Runtime per-combination zone re-flood. The compiler bakes only two global zone snapshots
+// (all-unflipped / all-flipped) selected by the single global FlipStatus. That cannot express
+// independent flip groups (e.g. group 1 flipped while group 0 stays put): a box in a non-flipped
+// alternated room has no zone in the opposite snapshot, so cross-group pathfinding breaks. These
+// rebuild a zone table for the ACTUAL current flip combination from the live box/overlap data and
+// each room's real flip state, and are recomputed at load and on every DoFlipMap.
+void BuildPathfindingFlipMetadata();
+void RecomputeRuntimeZones();
+const std::vector<int>& GetRuntimeZoneTable(int zoneType);
 
 bool CanCreatureJump(ItemInfo& item, JumpDistance jumpDistType);
 
