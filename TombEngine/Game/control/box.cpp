@@ -73,6 +73,8 @@ static bool IsBoxActiveNow(int box);
 static bool IsBoxUsableNow(int box, bool liveEdge);
 static bool OverlapActiveFromBox(int box, int overlapFlags);
 static int ResolveRuntimeBox(int box);
+static bool TryResolveRouteExitFloorAtVerticalPortal(ItemInfo* item, LOTInfo* LOT, Vector3i prevPos, const int* zone,
+	int currentBox, int boxHeight, FloorInfo*& floor, int& floorBox, short& roomNumber, int& height);
 
 struct RuntimePathEdge
 {
@@ -702,6 +704,86 @@ static void UpdateBadBoxes(ItemInfo* item)
 	}
 }
 
+static bool TryResolveRouteExitFloorAtVerticalPortal(ItemInfo* item, LOTInfo* LOT, Vector3i prevPos, const int* zone,
+	int currentBox, int boxHeight, FloorInfo*& floor, int& floorBox, short& roomNumber, int& height)
+{
+	if (Objects[item->ObjectNumber].nonLot ||
+		LOT->Zone == ZoneType::Water ||
+		LOT->Fly != NO_FLYING ||
+		LOT->IsJumping ||
+		currentBox == NO_VALUE)
+		return false;
+
+	int boxCount = (int)g_Level.PathfindingBoxes.size();
+	if (currentBox < 0 || currentBox >= boxCount || currentBox >= (int)LOT->Node.size())
+		return false;
+
+	if (floorBox < 0 || floorBox >= boxCount)
+		return false;
+
+	int exitBox = ResolveRuntimeBox(LOT->Node[currentBox].exitBox);
+	if (exitBox < 0 || exitBox >= boxCount)
+		return false;
+
+	if (exitBox == NO_VALUE || exitBox == currentBox || floorBox == exitBox)
+		return false;
+
+	if (zone[currentBox] == 0 || zone[exitBox] == 0 || zone[currentBox] != zone[exitBox])
+		return false;
+
+	int dh = boxHeight - height;
+	bool zoneMismatch = zone[currentBox] != zone[floorBox];
+
+	const auto& exit = g_Level.PathfindingBoxes[exitBox];
+	bool routeExitOverlaps = exit.height < boxHeight &&
+		item->Pose.Position.x >= (int)(exit.top * BLOCK(1)) &&
+		item->Pose.Position.x <  (int)(exit.bottom * BLOCK(1)) &&
+		item->Pose.Position.z >= (int)(exit.left * BLOCK(1)) &&
+		item->Pose.Position.z <  (int)(exit.right * BLOCK(1));
+
+	if ((dh <= LOT->Step) && (dh >= LOT->Drop) && (zone[floorBox] != 0) && !zoneMismatch && !routeExitOverlaps)
+		return false;
+
+	int probeX = std::clamp(item->Pose.Position.x, (int)(exit.top * BLOCK(1)), (int)(exit.bottom * BLOCK(1)) - 1);
+	int probeZ = std::clamp(item->Pose.Position.z, (int)(exit.left * BLOCK(1)), (int)(exit.right * BLOCK(1)) - 1);
+	if (probeX != item->Pose.Position.x || probeZ != item->Pose.Position.z)
+		return false;
+
+	auto tryProbe = [&](int probeY) -> bool
+	{
+		short rn = (short)FindRoomNumber(Vector3i(probeX, probeY, probeZ), item->RoomNumber);
+		auto* f = GetFloor(probeX, probeY, probeZ, &rn);
+		if (f == nullptr || f->PathfindingBoxID == NO_VALUE)
+			return false;
+
+		int bx = ResolveRuntimeBox(f->PathfindingBoxID);
+		if (bx != exitBox)
+			return false;
+
+		int surfaceHeight = GetFloorHeight(f, probeX, probeY, probeZ);
+		int stepUp = prevPos.y - surfaceHeight;
+		if (stepUp <= 0 || stepUp > LOT->Step)
+			return false;
+
+		floor = f;
+		floorBox = bx;
+		roomNumber = rn;
+		height = g_Level.PathfindingBoxes[bx].height;
+		return true;
+	};
+
+	if (tryProbe(exit.height - CLICK(1)))
+		return true;
+
+	for (int dY = LOT->Drop; dY <= LOT->Step; dY += CLICK(1))
+	{
+		if (tryProbe(boxHeight - dY))
+			return true;
+	}
+
+	return false;
+}
+
 /**
  * @brief Handles creature movement, collision, and positioning after animation.
  *
@@ -728,10 +810,12 @@ bool CreaturePathfind(ItemInfo* item, Vector3i prevPos, short angle, short tilt)
 	auto* LOT = &creature->LOT;
 	const int* zone = GetRuntimeZoneTable((int)LOT->Zone).data();
 
+	int currentBox = ResolveRuntimeBox(item->BoxNumber);
+
 	// Get height of creature's current box (for step/drop checks).
 	int boxHeight;
-	if (item->BoxNumber != NO_VALUE)
-		boxHeight = g_Level.PathfindingBoxes[item->BoxNumber].height;
+	if (currentBox >= 0 && currentBox < (int)g_Level.PathfindingBoxes.size())
+		boxHeight = g_Level.PathfindingBoxes[currentBox].height;
 	else
 		boxHeight = item->Floor;
 
@@ -787,6 +871,8 @@ bool CreaturePathfind(ItemInfo* item, Vector3i prevPos, short angle, short tilt)
 			}
 		}
 	}
+
+	TryResolveRouteExitFloorAtVerticalPortal(item, LOT, prevPos, zone, currentBox, boxHeight, floor, floorBox, roomNumber, height);
 
 	int nextHeight = 0;
 
@@ -3074,7 +3160,6 @@ bool IsCreatureVaultAvailable(ItemInfo* item, int stepCount)
 int CreatureVault(short itemNumber, short angle, int vault, int shift)
 {
 	auto* item = &g_Level.Items[itemNumber];
-	auto* creature = GetCreatureInfo(item);
 
 	int xBlock = item->Pose.Position.x / BLOCK(1);
 	int zBlock = item->Pose.Position.z / BLOCK(1);
@@ -3101,55 +3186,7 @@ int CreatureVault(short itemNumber, short angle, int vault, int shift)
 	}
 	else if (item->Pose.Position.y > (y - CLICK(1.5f)))
 	{
-		int climbVault = 0;
-		int currentBox = ResolveRuntimeBox(item->BoxNumber);
-		int exitBox = (currentBox != NO_VALUE) ? creature->LOT.Node[currentBox].exitBox : NO_VALUE;
-		int ddx = 0;
-		int ddz = 0;
-		int nearX = 0;
-		int nearZ = 0;
-		if (creature->LOT.Fly == NO_FLYING && exitBox != NO_VALUE && exitBox != currentBox)
-		{
-			const auto& exit = g_Level.PathfindingBoxes[exitBox];
-			int climb = g_Level.PathfindingBoxes[currentBox].height - exit.height;
-			if (climb > CLICK(1) && climb <= creature->LOT.Step)
-			{
-				nearX = std::clamp(item->Pose.Position.x, (int)(exit.top * BLOCK(1)), (int)(exit.bottom * BLOCK(1)) - 1);
-				nearZ = std::clamp(item->Pose.Position.z, (int)(exit.left * BLOCK(1)), (int)(exit.right * BLOCK(1)) - 1);
-				ddx = nearX - item->Pose.Position.x;
-				ddz = nearZ - item->Pose.Position.z;
-
-				if ((std::abs(ddx) + std::abs(ddz)) <= CLICK(1))
-				{
-					int probeY = exit.height - CLICK(1);
-					short rnProbe = (short)FindRoomNumber(Vector3i(nearX, probeY, nearZ), item->RoomNumber);
-					auto* fLedge = GetFloor(nearX, probeY, nearZ, &rnProbe);
-					if (fLedge != nullptr && ResolveRuntimeBox(fLedge->PathfindingBoxID) == exitBox)
-						climbVault = (climb < CLICK(2.5f)) ? 2 : ((climb < CLICK(3.5f)) ? 3 : 4);
-				}
-			}
-		}
-
-		if (climbVault == 0)
-			return 0;
-
-		if (std::abs(ddx) >= std::abs(ddz) && ddx != 0)
-		{
-			item->Pose.Position.x = (ddx > 0) ? (nearX - shift) : (nearX + shift);
-			item->Pose.Orientation.y = (ddx > 0) ? ANGLE(90.0f) : -ANGLE(90.0f);
-		}
-		else if (ddz != 0)
-		{
-			item->Pose.Position.z = (ddz > 0) ? (nearZ - shift) : (nearZ + shift);
-			item->Pose.Orientation.y = (ddz > 0) ? ANGLE(0.0f) : -ANGLE(180.0f);
-		}
-
-		item->Pose.Position.y = y;
-		item->Floor = y;
-		if (roomNumber != item->RoomNumber)
-			ItemNewRoom(itemNumber, roomNumber);
-
-		return climbVault;
+		return 0;
 	}
 	else if (item->Pose.Position.y > (y - CLICK(2.5f)))
 	{
@@ -3167,13 +3204,16 @@ int CreatureVault(short itemNumber, short angle, int vault, int shift)
 	// Jump
 	int newXblock = item->Pose.Position.x / BLOCK(1);
 	int newZblock = item->Pose.Position.z / BLOCK(1);
+	bool movedRoom = roomNumber != item->RoomNumber;
 
 	if (zBlock == newZblock)
 	{
 		if (xBlock == newXblock)
-			return 0;
-
-		if (xBlock < newXblock)
+		{
+			if (!movedRoom)
+				return 0;
+		}
+		else if (xBlock < newXblock)
 		{
 			item->Pose.Position.x = (newXblock * BLOCK(1)) - shift;
 			item->Pose.Orientation.y = ANGLE(90.0f);
