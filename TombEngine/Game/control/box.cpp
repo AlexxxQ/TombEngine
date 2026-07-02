@@ -72,8 +72,16 @@ using PathQueue = std::priority_queue<QueueElement, std::vector<QueueElement>, s
 static bool IsBoxActiveNow(int box);
 static bool IsBoxUsableNow(int box, bool liveEdge);
 static bool OverlapActiveFromBox(int box, int overlapFlags);
-static const std::vector<int>& GetSeamEdgesForBox(int box);
 static int ResolveRuntimeBox(int box);
+
+struct RuntimePathEdge
+{
+	int box = NO_VALUE;
+	int flags = 0;
+	bool live = false;
+};
+
+static const std::vector<RuntimePathEdge>& GetSeamEdgesForBox(int box);
 
 // AI behavior distance thresholds.
 constexpr auto REACHED_GOAL_RADIUS = BLOCK(0.625f);	// Distance at which AI considers goal reached.
@@ -215,9 +223,9 @@ void DrawLaraPathfinding(int boxIndex)
 			index++;
 	}
 
-	for (int seamBox : GetSeamEdgesForBox(boxIndex))
+	for (auto seamEdge : GetSeamEdgesForBox(boxIndex))
 	{
-		seamBox = ResolveRuntimeBox(seamBox);
+		int seamBox = ResolveRuntimeBox(seamEdge.box);
 		if (IsBoxUsableNow(seamBox, true))
 			DrawBox(seamBox, Vector3(1, 1, 0));
 	}
@@ -1840,17 +1848,10 @@ bool SearchLOT(LOTInfo* LOT, int depth)
 static std::vector<int>         s_boxFlipGroup;   // flip group of each box's room, or NO_VALUE
 static std::vector<signed char> s_boxNativeState; // 0 = base-only, 1 = alt-only, 2 = both (merged / non-alternated)
 static std::vector<int>         s_runtimeZones[(int)ZoneType::MaxZone];
-static std::vector<std::vector<int>> s_seamEdges; // per box: live room-sector neighbours that compiled overlaps can't represent safely
+static std::vector<std::vector<RuntimePathEdge>> s_seamEdges; // per box: live room-sector neighbours that compiled overlaps can't represent safely
 static std::vector<char>        s_liveEdgeBoxes; // boxes reachable through live room-sector edges, even if global metadata says inactive
 static std::vector<char>        s_runtimeActiveBoxes; // boxes present in currently active room-sector data
 static std::vector<int>         s_runtimeBoxAliases; // active duplicate surface boxes canonicalized to a single live box
-
-struct RuntimePathEdge
-{
-	int box = NO_VALUE;
-	int flags = 0;
-	bool live = false;
-};
 
 static std::vector<std::vector<RuntimePathEdge>> s_reverseEdges; // per target box: boxes that can move forward into it
 
@@ -1872,9 +1873,9 @@ static int ResolveRuntimeBox(int box)
 	return resolved;
 }
 
-static const std::vector<int>& GetSeamEdgesForBox(int box)
+static const std::vector<RuntimePathEdge>& GetSeamEdgesForBox(int box)
 {
-	static const std::vector<int> empty = {};
+	static const std::vector<RuntimePathEdge> empty = {};
 
 	box = ResolveRuntimeBox(box);
 	if (box < 0 || box >= (int)s_seamEdges.size())
@@ -2096,12 +2097,38 @@ static bool OverlapActiveFromBox(int box, int overlapFlags)
 	return (overlapFlags & needBit) != 0;
 }
 
+static bool TryGetCompiledOverlapFlags(int fromBox, int toBox, int& flags)
+{
+	fromBox = ResolveRuntimeBox(fromBox);
+	toBox = ResolveRuntimeBox(toBox);
+
+	int boxCount = (int)g_Level.PathfindingBoxes.size();
+	if (fromBox < 0 || fromBox >= boxCount || toBox < 0 || toBox >= boxCount)
+		return false;
+
+	int index = g_Level.PathfindingBoxes[fromBox].overlapIndex;
+	while (index >= 0 && index < (int)g_Level.Overlaps.size())
+	{
+		const auto& overlap = g_Level.Overlaps[index];
+		if (ResolveRuntimeBox(overlap.box) == toBox)
+		{
+			flags = overlap.flags;
+			return true;
+		}
+
+		if (overlap.flags & OVERLAP_END_BIT)
+			break;
+
+		index++;
+	}
+
+	return false;
+}
+
 struct PendingLiveStep
 {
 	int fromBox = NO_VALUE;
 	int toBox = NO_VALUE;
-	int fromRoom = NO_VALUE;
-	int toRoom = NO_VALUE;
 	int fromGroup = NO_VALUE;
 	int toGroup = NO_VALUE;
 	int fromState = 0;
@@ -2119,13 +2146,19 @@ static int GetFlipGroupState(int group)
 	return (group != NO_VALUE && group >= 0 && group < MAX_FLIPMAP && FlipStats[group]) ? 1 : 0;
 }
 
-static bool AddRuntimeSeamEdge(int fromBox, int toBox)
+static bool AddRuntimeSeamEdge(int fromBox, int toBox, int flags = 0)
 {
 	auto& adj = s_seamEdges[fromBox];
-	if (std::find(adj.begin(), adj.end(), toBox) != adj.end())
-		return false;
+	for (auto& edge : adj)
+	{
+		if (edge.box != toBox)
+			continue;
 
-	adj.push_back(toBox);
+		edge.flags |= flags;
+		return false;
+	}
+
+	adj.push_back({ toBox, flags, true });
 	s_liveEdgeBoxes[fromBox] = true;
 	s_liveEdgeBoxes[toBox] = true;
 	return true;
@@ -2250,7 +2283,6 @@ static int ResolveActiveOverlayBox(int overlayBox, const std::vector<int>& activ
 static void TryAddLiveSeamEdge(
 	int sourceBox,
 	int destBox,
-	int sourceRoomNumber,
 	int destRoomNumber,
 	int sourceGroup,
 	const std::vector<int>& activeOverlayBoxes,
@@ -2282,7 +2314,13 @@ static void TryAddLiveSeamEdge(
 	bool mixedGroupSeam = fromGroup != destGroup && sourceState != destState;
 	int dh = g_Level.PathfindingBoxes[fromBox].height - g_Level.PathfindingBoxes[toBox].height;
 	bool sameGroupLiveStep = metadataInactive && fromGroup == destGroup && abs(dh) <= CLICK(1);
-	if (!mixedGroupSeam && !sameGroupLiveStep)
+	int compiledFlags = 0;
+	bool hasCompiledOverlap = TryGetCompiledOverlapFlags(fromBox, toBox, compiledFlags);
+	bool inactiveCompiledOverlap = !metadataInactive &&
+		hasCompiledOverlap &&
+		!OverlapActiveFromBox(fromBox, compiledFlags);
+
+	if (!mixedGroupSeam && !sameGroupLiveStep && !inactiveCompiledOverlap)
 		return; // same-group/same-state live neighbours must not resurrect inactive phantom boxes
 
 	// Mixed-state cross-group seam. Keep it if the floor step is plausibly walkable;
@@ -2293,13 +2331,25 @@ static void TryAddLiveSeamEdge(
 
 	if (sameGroupLiveStep)
 	{
-		pendingLiveSteps.push_back({ fromBox, toBox, sourceRoomNumber, destRoomNumber, fromGroup, destGroup, sourceState, destState, dh });
+		pendingLiveSteps.push_back({ fromBox, toBox, fromGroup, destGroup, sourceState, destState, dh });
+		return;
+	}
+
+	if (inactiveCompiledOverlap)
+	{
+		AddRuntimeSeamEdge(fromBox, toBox, compiledFlags);
 		return;
 	}
 
 	mixedSeamPartners[fromBox].push_back(toBox);
 	mixedSeamPartners[toBox].push_back(fromBox);
-	AddRuntimeSeamEdge(fromBox, toBox);
+	AddRuntimeSeamEdge(fromBox, toBox, hasCompiledOverlap ? compiledFlags : 0);
+
+	int reverseFlags = 0;
+	if (!metadataInactive &&
+		TryGetCompiledOverlapFlags(toBox, fromBox, reverseFlags) &&
+		!OverlapActiveFromBox(toBox, reverseFlags))
+		AddRuntimeSeamEdge(toBox, fromBox, reverseFlags);
 }
 
 static int FindSameGroupBridgePartner(int inactiveBox, int activeBox, const std::vector<std::vector<int>>& mixedSeamPartners)
@@ -2356,6 +2406,7 @@ void BuildSeamEdges()
 	auto activeOverlayBoxes = BuildActiveOverlayMap(activeLiveBoxes, activeLiveBoxSet);
 	s_runtimeActiveBoxes = activeLiveBoxSet;
 	s_runtimeBoxAliases.assign(boxCount, NO_VALUE);
+
 	for (int box = 0; box < boxCount; box++)
 	{
 		if (activeOverlayBoxes[box] != NO_VALUE)
@@ -2391,7 +2442,7 @@ void BuildSeamEdges()
 				auto addLiveSeamEdge = [&](int Bp, int destRoomNumber)
 				{
 					TryAddLiveSeamEdge(
-						B, Bp, rn, destRoomNumber, sourceGroup,
+						B, Bp, destRoomNumber, sourceGroup,
 						activeOverlayBoxes,
 						mixedSeamPartners, pendingLiveSteps);
 				};
@@ -2454,8 +2505,8 @@ void BuildReversePathfindingEdges()
 
 		if (fromBox < (int)s_seamEdges.size())
 		{
-			for (int toBox : s_seamEdges[fromBox])
-				addReverseEdge(fromBox, toBox, 0, true);
+			for (const auto& edge : s_seamEdges[fromBox])
+				addReverseEdge(fromBox, edge.box, edge.flags, true);
 		}
 	}
 }
@@ -2569,10 +2620,10 @@ void RecomputeRuntimeZones()
 					}
 				}
 
-				// Synthesized cross-flip-group seam edges (live geometry; flags 0 = untagged walk edge).
+				// Synthesized cross-flip-group seam edges.
 				if (cur < (int)s_seamEdges.size())
-					for (int sb : s_seamEdges[cur])
-						processNeighbor(sb, 0, true);
+					for (const auto& edge : s_seamEdges[cur])
+						processNeighbor(edge.box, edge.flags, true);
 			}
 
 			zoneCounter++;
@@ -4306,6 +4357,9 @@ void InitializeItemBoxData()
 			}
 		}
 	}
+	// Normalize alternate-room portals before building mixed flip-state pathfinding data.
+	RemapAlternateRoomPortals();
+
 	// Build per-box flip metadata and compute the runtime zone table for the current
 	// (load-time, unflipped) flip combination. Recomputed on every DoFlipMap.
 	BuildPathfindingFlipMetadata();
