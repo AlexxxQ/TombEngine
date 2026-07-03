@@ -103,6 +103,7 @@ constexpr auto BOX_FLIP_METADATA     = 0x08000000;
 // vice versa.
 constexpr auto OVERLAP_UNFLIPPED_VALID			= 0x0001;
 constexpr auto OVERLAP_FLIPPED_VALID			= 0x0002;
+constexpr auto OVERLAP_ROUTE_EXIT_FLOOR_HINT	= 0x0004;
 
 constexpr auto OVERLAP_JUMP						= 0x800;
 constexpr auto OVERLAP_MONKEY					= 0x2000;

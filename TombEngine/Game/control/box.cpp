@@ -72,7 +72,7 @@ using PathQueue = std::priority_queue<QueueElement, std::vector<QueueElement>, s
 static bool IsBoxActiveNow(int box);
 static bool IsBoxUsableNow(int box, bool liveEdge);
 static bool OverlapActiveFromBox(int box, int overlapFlags);
-static int ResolveRuntimeBox(int box);
+static bool TryGetCompiledOverlapFlags(int fromBox, int toBox, int& flags);
 static bool TryResolveRouteExitFloorAtVerticalPortal(ItemInfo* item, LOTInfo* LOT, Vector3i prevPos, const int* zone,
 	int currentBox, int boxHeight, FloorInfo*& floor, int& floorBox, short& roomNumber, int& height);
 
@@ -184,7 +184,6 @@ static void DrawBox(int boxIndex, const Vector3& color)
 
 void DrawLaraPathfinding(int boxIndex)
 {
-	boxIndex = ResolveRuntimeBox(boxIndex);
 	if (boxIndex <= NO_VALUE || boxIndex >= g_Level.PathfindingBoxes.size())
 		return;
 
@@ -215,7 +214,7 @@ void DrawLaraPathfinding(int boxIndex)
 
 		auto overlap = g_Level.Overlaps[index];
 
-		int overlapBox = ResolveRuntimeBox(overlap.box);
+		int overlapBox = overlap.box;
 		if (IsBoxUsableNow(overlapBox, false) && OverlapActiveFromBox(boxIndex, overlap.flags))
 			DrawBox(overlapBox, Vector3(1, 1, 0));
 
@@ -227,7 +226,7 @@ void DrawLaraPathfinding(int boxIndex)
 
 	for (auto seamEdge : GetSeamEdgesForBox(boxIndex))
 	{
-		int seamBox = ResolveRuntimeBox(seamEdge.box);
+		int seamBox = seamEdge.box;
 		if (IsBoxUsableNow(seamBox, true))
 			DrawBox(seamBox, Vector3(1, 1, 0));
 	}
@@ -248,9 +247,9 @@ void DrawItemPathfinding(int itemNumber)
 
 	auto* creature = GetCreatureInfo(&item);
 	const auto& LOT = creature->LOT;
-	int itemBox = ResolveRuntimeBox(item.BoxNumber);
-	int targetBox = ResolveRuntimeBox(LOT.TargetBox);
-	int requiredBox = ResolveRuntimeBox(LOT.RequiredBox);
+	int itemBox = item.BoxNumber;
+	int targetBox = LOT.TargetBox;
+	int requiredBox = LOT.RequiredBox;
 
 	// Green box: current box (where creature is).
 	if (itemBox != NO_VALUE)
@@ -484,13 +483,13 @@ bool SameZone(CreatureInfo* creature, ItemInfo* target)
 	auto* zone = GetRuntimeZoneTable((int)creature->LOT.Zone).data();
 
 	auto& roomSource = g_Level.Rooms[item.RoomNumber];
-	int boxSource = ResolveRuntimeBox(GetSector(&roomSource, item.Pose.Position.x - roomSource.Position.x, item.Pose.Position.z - roomSource.Position.z)->PathfindingBoxID);
+	int boxSource = GetSector(&roomSource, item.Pose.Position.x - roomSource.Position.x, item.Pose.Position.z - roomSource.Position.z)->PathfindingBoxID;
 	if (boxSource == NO_VALUE)
 		return false;
 	item.BoxNumber = boxSource;
 
 	auto& roomTarget = g_Level.Rooms[target->RoomNumber];
-	int boxTarget = ResolveRuntimeBox(GetSector(&roomTarget, target->Pose.Position.x - roomTarget.Position.x, target->Pose.Position.z - roomTarget.Position.z)->PathfindingBoxID);
+	int boxTarget = GetSector(&roomTarget, target->Pose.Position.x - roomTarget.Position.x, target->Pose.Position.z - roomTarget.Position.z)->PathfindingBoxID;
 	if (boxTarget == NO_VALUE)
 		return false;
 	target->BoxNumber = boxTarget;
@@ -592,7 +591,6 @@ void AlertAllGuards(short itemNumber)
  */
 static void AddBadBox(LOTInfo* LOT, int boxNumber)
 {
-	boxNumber = ResolveRuntimeBox(boxNumber);
 	if (boxNumber == NO_VALUE)
 		return;
 
@@ -637,13 +635,12 @@ static void AddBadBox(LOTInfo* LOT, int boxNumber)
  */
 static bool IsBoxInCooldown(const LOTInfo* LOT, int boxNumber)
 {
-	boxNumber = ResolveRuntimeBox(boxNumber);
 	if (boxNumber == NO_VALUE)
 		return false;
 
 	for (const auto& badBox : LOT->BadBoxes)
 	{
-		if (ResolveRuntimeBox(badBox.BoxNumber) == boxNumber && badBox.Count < 0)
+		if (badBox.BoxNumber == boxNumber && badBox.Count < 0)
 			return true;
 	}
 
@@ -721,7 +718,7 @@ static bool TryResolveRouteExitFloorAtVerticalPortal(ItemInfo* item, LOTInfo* LO
 	if (floorBox < 0 || floorBox >= boxCount)
 		return false;
 
-	int exitBox = ResolveRuntimeBox(LOT->Node[currentBox].exitBox);
+	int exitBox = LOT->Node[currentBox].exitBox;
 	if (exitBox < 0 || exitBox >= boxCount)
 		return false;
 
@@ -731,19 +728,17 @@ static bool TryResolveRouteExitFloorAtVerticalPortal(ItemInfo* item, LOTInfo* LO
 	if (zone[currentBox] == 0 || zone[exitBox] == 0 || zone[currentBox] != zone[exitBox])
 		return false;
 
-	int dh = boxHeight - height;
-	bool zoneMismatch = zone[currentBox] != zone[floorBox];
+	constexpr int routeExitFloorHintFlag = 0x0004;
+	int routeFlags = 0;
+	bool routeExitFloorHint =
+		TryGetCompiledOverlapFlags(currentBox, exitBox, routeFlags) &&
+		OverlapActiveFromBox(currentBox, routeFlags) &&
+		(routeFlags & routeExitFloorHintFlag) != 0;
 
-	const auto& exit = g_Level.PathfindingBoxes[exitBox];
-	bool routeExitOverlaps = exit.height < boxHeight &&
-		item->Pose.Position.x >= (int)(exit.top * BLOCK(1)) &&
-		item->Pose.Position.x <  (int)(exit.bottom * BLOCK(1)) &&
-		item->Pose.Position.z >= (int)(exit.left * BLOCK(1)) &&
-		item->Pose.Position.z <  (int)(exit.right * BLOCK(1));
-
-	if ((dh <= LOT->Step) && (dh >= LOT->Drop) && (zone[floorBox] != 0) && !zoneMismatch && !routeExitOverlaps)
+	if (!routeExitFloorHint)
 		return false;
 
+	const auto& exit = g_Level.PathfindingBoxes[exitBox];
 	int probeX = std::clamp(item->Pose.Position.x, (int)(exit.top * BLOCK(1)), (int)(exit.bottom * BLOCK(1)) - 1);
 	int probeZ = std::clamp(item->Pose.Position.z, (int)(exit.left * BLOCK(1)), (int)(exit.right * BLOCK(1)) - 1);
 	if (probeX != item->Pose.Position.x || probeZ != item->Pose.Position.z)
@@ -756,7 +751,7 @@ static bool TryResolveRouteExitFloorAtVerticalPortal(ItemInfo* item, LOTInfo* LO
 		if (f == nullptr || f->PathfindingBoxID == NO_VALUE)
 			return false;
 
-		int bx = ResolveRuntimeBox(f->PathfindingBoxID);
+		int bx = f->PathfindingBoxID;
 		if (bx != exitBox)
 			return false;
 
@@ -810,7 +805,7 @@ bool CreaturePathfind(ItemInfo* item, Vector3i prevPos, short angle, short tilt)
 	auto* LOT = &creature->LOT;
 	const int* zone = GetRuntimeZoneTable((int)LOT->Zone).data();
 
-	int currentBox = ResolveRuntimeBox(item->BoxNumber);
+	int currentBox = item->BoxNumber;
 
 	// Get height of creature's current box (for step/drop checks).
 	int boxHeight;
@@ -835,7 +830,7 @@ bool CreaturePathfind(ItemInfo* item, Vector3i prevPos, short angle, short tilt)
 	if (floor->PathfindingBoxID == NO_VALUE)
 		return false;
 
-	int floorBox = ResolveRuntimeBox(floor->PathfindingBoxID);
+	int floorBox = floor->PathfindingBoxID;
 	int height = g_Level.PathfindingBoxes[floorBox].height;
 
 	// PORTAL-Y RETRY (movement, active-guarded): at a vertical portal the head-Y floor probe
@@ -858,7 +853,7 @@ bool CreaturePathfind(ItemInfo* item, Vector3i prevPos, short angle, short tilt)
 				auto* f = GetFloor(item->Pose.Position.x, boxHeight - dY, item->Pose.Position.z, &rn2);
 				if (f == nullptr || f->PathfindingBoxID == NO_VALUE)
 					continue;
-				int bx = ResolveRuntimeBox(f->PathfindingBoxID);
+				int bx = f->PathfindingBoxID;
 				int dh2 = boxHeight - g_Level.PathfindingBoxes[bx].height;
 				if (dh2 <= LOT->Step && dh2 >= LOT->Drop && zone[bx] != 0)
 				{
@@ -886,7 +881,7 @@ bool CreaturePathfind(ItemInfo* item, Vector3i prevPos, short angle, short tilt)
 	{
 		// NonLot creatures don't use pathfinding, just collision.
 		floor = GetFloor(item->Pose.Position.x, item->Pose.Position.y, item->Pose.Position.z, &roomNumber);
-		floorBox = ResolveRuntimeBox(floor->PathfindingBoxID);
+		floorBox = floor->PathfindingBoxID;
 		height = g_Level.PathfindingBoxes[floorBox].height;
 		nextBox = floorBox;
 	}
@@ -897,7 +892,7 @@ bool CreaturePathfind(ItemInfo* item, Vector3i prevPos, short angle, short tilt)
 		nextHeight = g_Level.PathfindingBoxes[nextBox].height;
 
 	bool heightThresholdReached = LOT->Fly == NO_FLYING && !LOT->IsJumping && (boxHeight - height > LOT->Step || boxHeight - height < LOT->Drop);
-	bool zoneIncorrect = item->BoxNumber != NO_VALUE && !LOT->IsJumping && LOT->Zone != ZoneType::Flyer && (zone[ResolveRuntimeBox(item->BoxNumber)] != zone[floorBox]);
+	bool zoneIncorrect = item->BoxNumber != NO_VALUE && !LOT->IsJumping && LOT->Zone != ZoneType::Flyer && (zone[item->BoxNumber] != zone[floorBox]);
 
 	// ZONE/STEP/DROP VALIDATION:
 	// If creature moved to invalid floor, push back to sector boundary.
@@ -929,7 +924,7 @@ bool CreaturePathfind(ItemInfo* item, Vector3i prevPos, short angle, short tilt)
 
 		if (floor->PathfindingBoxID != NO_VALUE)
 		{
-			floorBox = ResolveRuntimeBox(floor->PathfindingBoxID);
+			floorBox = floor->PathfindingBoxID;
 			height = g_Level.PathfindingBoxes[floorBox].height;
 			if (!Objects[item->ObjectNumber].nonLot)
 			{
@@ -938,7 +933,7 @@ bool CreaturePathfind(ItemInfo* item, Vector3i prevPos, short angle, short tilt)
 			else
 			{
 				floor = GetFloor(item->Pose.Position.x, item->Pose.Position.y, item->Pose.Position.z, &roomNumber);
-				floorBox = ResolveRuntimeBox(floor->PathfindingBoxID);
+				floorBox = floor->PathfindingBoxID;
 				height = g_Level.PathfindingBoxes[floorBox].height;
 				nextBox = floorBox;
 			}
@@ -1092,7 +1087,7 @@ bool CreaturePathfind(ItemInfo* item, Vector3i prevPos, short angle, short tilt)
 
 		if (g_GameFlow->GetSettings()->Pathfinding.VerticalGeometryAvoidance && item->BoxNumber != NO_VALUE)
 		{
-			int currentBox = ResolveRuntimeBox(item->BoxNumber);
+			int currentBox = item->BoxNumber;
 			int nextBox = creature->LOT.Node[currentBox].exitBox;
 
 			if (nextBox != NO_VALUE && nextBox != currentBox)
@@ -1681,7 +1676,8 @@ bool BadFloor(int x, int y, int z, int boxHeight, int nextHeight, short roomNumb
 			auto* f = GetFloor(x, probeY, z, &rn2);
 			if (!f || f->PathfindingBoxID == NO_VALUE)
 				return false;
-			int h2 = g_Level.PathfindingBoxes[f->PathfindingBoxID].height;
+			int bx2 = f->PathfindingBoxID;
+			int h2 = g_Level.PathfindingBoxes[bx2].height;
 			int dh2 = boxHeight - h2;
 			return (dh2 <= LOT->Step && dh2 >= LOT->Drop);
 		};
@@ -1840,7 +1836,6 @@ bool EscapeBox(ItemInfo* item, ItemInfo* enemy, int boxNumber)
  */
 void TargetBox(LOTInfo* LOT, int boxNumber)
 {
-	boxNumber = ResolveRuntimeBox(boxNumber);
 	if (boxNumber == NO_VALUE)
 		return;
 
@@ -1877,10 +1872,6 @@ void TargetBox(LOTInfo* LOT, int boxNumber)
  */
 bool UpdateLOT(LOTInfo* LOT, int depth)
 {
-	LOT->RequiredBox = ResolveRuntimeBox(LOT->RequiredBox);
-	LOT->TargetBox = ResolveRuntimeBox(LOT->TargetBox);
-	LOT->Head = ResolveRuntimeBox(LOT->Head);
-	LOT->Tail = ResolveRuntimeBox(LOT->Tail);
 
 	if (LOT->RequiredBox != NO_VALUE && LOT->RequiredBox != LOT->TargetBox)
 	{
@@ -1937,33 +1928,13 @@ static std::vector<int>         s_runtimeZones[(int)ZoneType::MaxZone];
 static std::vector<std::vector<RuntimePathEdge>> s_seamEdges; // per box: live room-sector neighbours that compiled overlaps can't represent safely
 static std::vector<char>        s_liveEdgeBoxes; // boxes reachable through live room-sector edges, even if global metadata says inactive
 static std::vector<char>        s_runtimeActiveBoxes; // boxes present in currently active room-sector data
-static std::vector<int>         s_runtimeBoxAliases; // active duplicate surface boxes canonicalized to a single live box
 
 static std::vector<std::vector<RuntimePathEdge>> s_reverseEdges; // per target box: boxes that can move forward into it
-
-static int ResolveRuntimeBox(int box)
-{
-	if (box < 0 || box >= (int)s_runtimeBoxAliases.size())
-		return box;
-
-	int resolved = box;
-	for (int i = 0; i < 8; i++)
-	{
-		int next = s_runtimeBoxAliases[resolved];
-		if (next == NO_VALUE || next == resolved || next < 0 || next >= (int)s_runtimeBoxAliases.size())
-			break;
-
-		resolved = next;
-	}
-
-	return resolved;
-}
 
 static const std::vector<RuntimePathEdge>& GetSeamEdgesForBox(int box)
 {
 	static const std::vector<RuntimePathEdge> empty = {};
 
-	box = ResolveRuntimeBox(box);
 	if (box < 0 || box >= (int)s_seamEdges.size())
 		return empty;
 
@@ -1997,7 +1968,7 @@ static int ResolveCreatureCurrentBox(ItemInfo* item)
 		legacyBox != NO_VALUE && IsBoxUsableNow(legacyBox, false))
 		resolvedBox = legacyBox;
 
-	return ResolveRuntimeBox(resolvedBox);
+	return resolvedBox;
 }
 
 const std::vector<int>& GetRuntimeZoneTable(int zoneType)
@@ -2148,7 +2119,6 @@ static bool IsBoxActiveNow(int box)
 
 static bool IsBoxUsableNow(int box, bool liveEdge)
 {
-	box = ResolveRuntimeBox(box);
 	if (box < 0 || box >= (int)s_boxNativeState.size())
 		return false;
 
@@ -2172,7 +2142,6 @@ static bool IsBoxUsableNow(int box, bool liveEdge)
 // ALT neighbours (F), not back down to B -- exactly the one-way seam the logs showed.
 static bool OverlapActiveFromBox(int box, int overlapFlags)
 {
-	box = ResolveRuntimeBox(box);
 
 	if ((overlapFlags & (OVERLAP_UNFLIPPED_VALID | OVERLAP_FLIPPED_VALID)) == 0)
 		return true; // untagged (legacy compile) -> valid in both states
@@ -2185,8 +2154,6 @@ static bool OverlapActiveFromBox(int box, int overlapFlags)
 
 static bool TryGetCompiledOverlapFlags(int fromBox, int toBox, int& flags)
 {
-	fromBox = ResolveRuntimeBox(fromBox);
-	toBox = ResolveRuntimeBox(toBox);
 
 	int boxCount = (int)g_Level.PathfindingBoxes.size();
 	if (fromBox < 0 || fromBox >= boxCount || toBox < 0 || toBox >= boxCount)
@@ -2196,7 +2163,7 @@ static bool TryGetCompiledOverlapFlags(int fromBox, int toBox, int& flags)
 	while (index >= 0 && index < (int)g_Level.Overlaps.size())
 	{
 		const auto& overlap = g_Level.Overlaps[index];
-		if (ResolveRuntimeBox(overlap.box) == toBox)
+		if (overlap.box == toBox)
 		{
 			flags = overlap.flags;
 			return true;
@@ -2210,17 +2177,6 @@ static bool TryGetCompiledOverlapFlags(int fromBox, int toBox, int& flags)
 
 	return false;
 }
-
-struct PendingLiveStep
-{
-	int fromBox = NO_VALUE;
-	int toBox = NO_VALUE;
-	int fromGroup = NO_VALUE;
-	int toGroup = NO_VALUE;
-	int fromState = 0;
-	int toState = 0;
-	int dh = 0;
-};
 
 static int GetRoomFlipGroup(const RoomData& room)
 {
@@ -2250,42 +2206,7 @@ static bool AddRuntimeSeamEdge(int fromBox, int toBox, int flags = 0)
 	return true;
 }
 
-static bool BoxesOverlapXZ(int a, int b)
-{
-	int boxCount = (int)g_Level.PathfindingBoxes.size();
-	if (a < 0 || a >= boxCount || b < 0 || b >= boxCount)
-		return false;
-
-	auto& A = g_Level.PathfindingBoxes[a];
-	auto& B = g_Level.PathfindingBoxes[b];
-	return A.left < B.right &&
-		A.right > B.left &&
-		A.top < B.bottom &&
-		A.bottom > B.top;
-}
-
-static int GetBoxOverlapAreaXZ(int a, int b)
-{
-	if (!BoxesOverlapXZ(a, b))
-		return 0;
-
-	auto& A = g_Level.PathfindingBoxes[a];
-	auto& B = g_Level.PathfindingBoxes[b];
-	int xOverlap = std::min((int)A.bottom, (int)B.bottom) - std::max((int)A.top, (int)B.top);
-	int zOverlap = std::min((int)A.right, (int)B.right) - std::max((int)A.left, (int)B.left);
-	return xOverlap * zOverlap;
-}
-
-static int GetBoxAreaXZ(int box)
-{
-	if (box < 0 || box >= (int)g_Level.PathfindingBoxes.size())
-		return 0;
-
-	auto& B = g_Level.PathfindingBoxes[box];
-	return (int)(B.bottom - B.top) * (int)(B.right - B.left);
-}
-
-static std::vector<char> BuildActiveLiveBoxSet(std::vector<int>& activeLiveBoxes)
+static std::vector<char> BuildActiveLiveBoxSet()
 {
 	int boxCount = (int)g_Level.PathfindingBoxes.size();
 	std::vector<char> activeLiveBoxSet(boxCount, false);
@@ -2300,10 +2221,8 @@ static std::vector<char> BuildActiveLiveBoxSet(std::vector<int>& activeLiveBoxes
 			int box = sector.PathfindingBoxID;
 			if (box != NO_VALUE &&
 				box < boxCount &&
-				IsBoxActiveNow(box) &&
 				!activeLiveBoxSet[box])
 			{
-				activeLiveBoxes.push_back(box);
 				activeLiveBoxSet[box] = true;
 			}
 		}
@@ -2312,68 +2231,12 @@ static std::vector<char> BuildActiveLiveBoxSet(std::vector<int>& activeLiveBoxes
 	return activeLiveBoxSet;
 }
 
-static std::vector<int> BuildActiveOverlayMap(const std::vector<int>& activeLiveBoxes, const std::vector<char>& activeLiveBoxSet)
-{
-	int boxCount = (int)g_Level.PathfindingBoxes.size();
-	std::vector<int> activeOverlayBoxes(boxCount, NO_VALUE);
-
-	for (int overlayBox = 0; overlayBox < boxCount; overlayBox++)
-	{
-		auto& box = g_Level.PathfindingBoxes[overlayBox];
-		bool overlayActive = activeLiveBoxSet[overlayBox] != 0;
-		int overlayArea = GetBoxAreaXZ(overlayBox);
-		int bestBox = NO_VALUE;
-		int bestArea = 0;
-		int bestHeightDelta = INT_MAX;
-
-		for (int activeBox : activeLiveBoxes)
-		{
-			if (activeBox == overlayBox)
-				continue;
-
-			auto& active = g_Level.PathfindingBoxes[activeBox];
-			int area = GetBoxOverlapAreaXZ(overlayBox, activeBox);
-			if (area <= 0)
-				continue;
-
-			int heightDelta = abs(box.height - active.height);
-			if (overlayActive)
-			{
-				int activeArea = GetBoxAreaXZ(activeBox);
-				if (heightDelta != 0 || area != overlayArea || activeArea <= overlayArea)
-					continue;
-			}
-
-			if (area > bestArea || (area == bestArea && heightDelta < bestHeightDelta))
-			{
-				bestBox = activeBox;
-				bestArea = area;
-				bestHeightDelta = heightDelta;
-			}
-		}
-
-		activeOverlayBoxes[overlayBox] = bestBox;
-	}
-
-	return activeOverlayBoxes;
-}
-
-static int ResolveActiveOverlayBox(int overlayBox, const std::vector<int>& activeOverlayBoxes)
-{
-	if (overlayBox < 0 || overlayBox >= (int)activeOverlayBoxes.size())
-		return NO_VALUE;
-
-	return activeOverlayBoxes[overlayBox];
-}
-
 static void TryAddLiveSeamEdge(
 	int sourceBox,
 	int destBox,
 	int destRoomNumber,
 	int sourceGroup,
-	const std::vector<int>& activeOverlayBoxes,
-	std::vector<std::vector<int>>& mixedSeamPartners,
-	std::vector<PendingLiveStep>& pendingLiveSteps)
+	bool allowActiveVerticalPortalEdge)
 {
 	int boxCount = (int)g_Level.PathfindingBoxes.size();
 	if (destBox == NO_VALUE || destBox >= boxCount || destBox == sourceBox)
@@ -2385,95 +2248,38 @@ static void TryAddLiveSeamEdge(
 	if (!destRoom.Active())
 		return;
 
-	int sourceOverlay = ResolveActiveOverlayBox(sourceBox, activeOverlayBoxes);
-	int destOverlay = ResolveActiveOverlayBox(destBox, activeOverlayBoxes);
-	int fromBox = (sourceOverlay != NO_VALUE) ? sourceOverlay : sourceBox;
-	int toBox = (destOverlay != NO_VALUE) ? destOverlay : destBox;
+	int fromBox = sourceBox;
+	int toBox = destBox;
 	if (fromBox == NO_VALUE || toBox == NO_VALUE || fromBox >= boxCount || toBox >= boxCount || fromBox == toBox)
 		return;
 
-	int fromGroup = (sourceOverlay != NO_VALUE) ? s_boxFlipGroup[fromBox] : sourceGroup;
-	int destGroup = (destOverlay != NO_VALUE) ? s_boxFlipGroup[toBox] : GetRoomFlipGroup(destRoom);
+	int fromGroup = (fromBox != sourceBox) ? s_boxFlipGroup[fromBox] : sourceGroup;
+	int destGroup = (toBox != destBox) ? s_boxFlipGroup[toBox] : GetRoomFlipGroup(destRoom);
 	int sourceState = GetFlipGroupState(fromGroup);
 	int destState = GetFlipGroupState(destGroup);
-	bool metadataInactive = !IsBoxActiveNow(fromBox) || !IsBoxActiveNow(toBox);
 	bool mixedGroupSeam = fromGroup != destGroup && sourceState != destState;
+	bool activeVerticalPortalSeam =
+		allowActiveVerticalPortalEdge &&
+		fromBox >= 0 &&
+		fromBox < (int)s_runtimeActiveBoxes.size() &&
+		toBox >= 0 &&
+		toBox < (int)s_runtimeActiveBoxes.size() &&
+		s_runtimeActiveBoxes[fromBox] != 0 &&
+		s_runtimeActiveBoxes[toBox] != 0;
 	int dh = g_Level.PathfindingBoxes[fromBox].height - g_Level.PathfindingBoxes[toBox].height;
-	bool sameGroupLiveStep = metadataInactive && fromGroup == destGroup && abs(dh) <= CLICK(1);
 	int compiledFlags = 0;
 	bool hasCompiledOverlap = TryGetCompiledOverlapFlags(fromBox, toBox, compiledFlags);
-	bool inactiveCompiledOverlap = !metadataInactive &&
-		hasCompiledOverlap &&
-		!OverlapActiveFromBox(fromBox, compiledFlags);
 
-	if (!mixedGroupSeam && !sameGroupLiveStep && !inactiveCompiledOverlap)
-		return; // same-group/same-state live neighbours must not resurrect inactive phantom boxes
+	if (!mixedGroupSeam && !activeVerticalPortalSeam)
+		return; // horizontal same-state live neighbours must not resurrect inactive phantom boxes
 
-	// Mixed-state cross-group seam. Keep it if the floor step is plausibly walkable;
-	// the per-creature Step/Drop is enforced later in CanExpandToBox. Metadata-inactive
-	// boxes may participate only here, through live geometry, not through stale compiled paths.
+	// Mixed-state cross-group seam, or a real active vertical-portal seam not expressible by
+	// compiled overlaps. Keep it if the floor step is plausibly walkable; the per-creature
+	// Step/Drop is enforced later in CanExpandToBox.
 	if (abs(dh) > BLOCK(2))
 		return;
 
-	if (sameGroupLiveStep)
-	{
-		pendingLiveSteps.push_back({ fromBox, toBox, fromGroup, destGroup, sourceState, destState, dh });
-		return;
-	}
-
-	if (inactiveCompiledOverlap)
-	{
-		AddRuntimeSeamEdge(fromBox, toBox, compiledFlags);
-		return;
-	}
-
-	mixedSeamPartners[fromBox].push_back(toBox);
-	mixedSeamPartners[toBox].push_back(fromBox);
 	AddRuntimeSeamEdge(fromBox, toBox, hasCompiledOverlap ? compiledFlags : 0);
-
-	int reverseFlags = 0;
-	if (!metadataInactive &&
-		TryGetCompiledOverlapFlags(toBox, fromBox, reverseFlags) &&
-		!OverlapActiveFromBox(toBox, reverseFlags))
-		AddRuntimeSeamEdge(toBox, fromBox, reverseFlags);
-}
-
-static int FindSameGroupBridgePartner(int inactiveBox, int activeBox, const std::vector<std::vector<int>>& mixedSeamPartners)
-{
-	int boxCount = (int)g_Level.PathfindingBoxes.size();
-	if (inactiveBox < 0 || inactiveBox >= boxCount || activeBox < 0 || activeBox >= boxCount)
-		return NO_VALUE;
-
-	int activeHeight = g_Level.PathfindingBoxes[activeBox].height;
-	for (int partner : mixedSeamPartners[inactiveBox])
-	{
-		if (partner >= 0 &&
-			partner < boxCount &&
-			abs(g_Level.PathfindingBoxes[partner].height - activeHeight) <= BLOCK(1))
-			return partner;
-	}
-
-	return NO_VALUE;
-}
-
-static void FlushPendingLiveSteps(
-	const std::vector<PendingLiveStep>& pendingLiveSteps,
-	const std::vector<int>& activeOverlayBoxes,
-	const std::vector<std::vector<int>>& mixedSeamPartners)
-{
-	for (const auto& edge : pendingLiveSteps)
-	{
-		int fromOverlay = ResolveActiveOverlayBox(edge.fromBox, activeOverlayBoxes);
-		int toOverlay = ResolveActiveOverlayBox(edge.toBox, activeOverlayBoxes);
-		int fromBridgePartner = !IsBoxActiveNow(edge.fromBox) ? FindSameGroupBridgePartner(edge.fromBox, edge.toBox, mixedSeamPartners) : NO_VALUE;
-		int toBridgePartner = !IsBoxActiveNow(edge.toBox) ? FindSameGroupBridgePartner(edge.toBox, edge.fromBox, mixedSeamPartners) : NO_VALUE;
-		bool allow = (fromBridgePartner != NO_VALUE || toBridgePartner != NO_VALUE) &&
-			fromOverlay == NO_VALUE &&
-			toOverlay == NO_VALUE;
-
-		if (allow)
-			AddRuntimeSeamEdge(edge.fromBox, edge.toBox);
-	}
 }
 
 // Synthesize live adjacencies the 2-pass compiler can't represent safely. In mixed flip states,
@@ -2486,20 +2292,8 @@ void BuildSeamEdges()
 	int boxCount = (int)g_Level.PathfindingBoxes.size();
 	s_seamEdges.assign(boxCount, {});
 	s_liveEdgeBoxes.assign(boxCount, false);
-	std::vector<std::vector<int>> mixedSeamPartners(boxCount);
-	std::vector<int> activeLiveBoxes;
-	auto activeLiveBoxSet = BuildActiveLiveBoxSet(activeLiveBoxes);
-	auto activeOverlayBoxes = BuildActiveOverlayMap(activeLiveBoxes, activeLiveBoxSet);
+	auto activeLiveBoxSet = BuildActiveLiveBoxSet();
 	s_runtimeActiveBoxes = activeLiveBoxSet;
-	s_runtimeBoxAliases.assign(boxCount, NO_VALUE);
-
-	for (int box = 0; box < boxCount; box++)
-	{
-		if (activeOverlayBoxes[box] != NO_VALUE)
-			s_runtimeBoxAliases[box] = activeOverlayBoxes[box];
-	}
-
-	std::vector<PendingLiveStep> pendingLiveSteps;
 
 	static const int dx[4] = { BLOCK(1), -BLOCK(1), 0, 0 };
 	static const int dz[4] = { 0, 0, BLOCK(1), -BLOCK(1) };
@@ -2528,9 +2322,7 @@ void BuildSeamEdges()
 				auto addLiveSeamEdge = [&](int Bp, int destRoomNumber)
 				{
 					TryAddLiveSeamEdge(
-						B, Bp, destRoomNumber, sourceGroup,
-						activeOverlayBoxes,
-						mixedSeamPartners, pendingLiveSteps);
+						B, Bp, destRoomNumber, sourceGroup, false);
 				};
 
 				auto addVerticalPortalEdge = [&](bool isBelow)
@@ -2540,7 +2332,7 @@ void BuildSeamEdges()
 						return;
 
 					auto& nextSector = TEN::Collision::Floordata::GetFloor(*nextRoom, wx, wz);
-					addLiveSeamEdge(nextSector.PathfindingBoxID, *nextRoom);
+					TryAddLiveSeamEdge(B, nextSector.PathfindingBoxID, *nextRoom, sourceGroup, true);
 				};
 
 				addVerticalPortalEdge(true);
@@ -2554,8 +2346,6 @@ void BuildSeamEdges()
 			}
 		}
 	}
-
-	FlushPendingLiveSteps(pendingLiveSteps, activeOverlayBoxes, mixedSeamPartners);
 }
 
 void BuildReversePathfindingEdges()
@@ -2565,8 +2355,6 @@ void BuildReversePathfindingEdges()
 
 	auto addReverseEdge = [&](int fromBox, int toBox, int flags, bool live)
 	{
-		fromBox = ResolveRuntimeBox(fromBox);
-		toBox = ResolveRuntimeBox(toBox);
 		if (fromBox < 0 || fromBox >= boxCount || toBox < 0 || toBox >= boxCount)
 			return;
 		if (fromBox == toBox)
@@ -2619,9 +2407,6 @@ void RecomputeRuntimeZones()
 		int zoneCounter = 1;
 		for (int seed = 0; seed < boxCount; seed++)
 		{
-			if (ResolveRuntimeBox(seed) != seed)
-				continue;
-
 			if (zones[seed] != 0 || !IsBoxUsableNow(seed, false))
 				continue;
 
@@ -2640,7 +2425,6 @@ void RecomputeRuntimeZones()
 				// Per-neighbour flood step, shared by compiled overlaps and synthesized seam edges.
 				auto processNeighbor = [&](int nb, int ovf, bool liveEdge)
 				{
-					nb = ResolveRuntimeBox(nb);
 					if (nb < 0 || nb >= boxCount || zones[nb] != 0)
 						return;
 					if (nb == cur)
@@ -2720,8 +2504,6 @@ void RecomputeRuntimeZones()
 
 bool CanExpandToBox(LOTInfo* LOT, int fromBox, int toBox, int overlapFlags, int searchZone, const std::vector<int>& zone, bool liveEdge)
 {
-	fromBox = ResolveRuntimeBox(fromBox);
-	toBox = ResolveRuntimeBox(toBox);
 	if (fromBox == NO_VALUE || toBox == NO_VALUE)
 		return false;
 	if (fromBox == toBox)
@@ -2811,7 +2593,6 @@ bool SearchLOT_BFS(LOTInfo* LOT, int depth)
 		// Per-neighbour expansion, shared by compiled overlaps and synthesized seam edges.
 		auto expandNeighbor = [&](int boxNumber, int flags, bool liveEdge)
 		{
-			boxNumber = ResolveRuntimeBox(boxNumber);
 			if (boxNumber == NO_VALUE || boxNumber == LOT->Head)
 				return;
 
@@ -2913,9 +2694,6 @@ bool SearchLOT_DijkstraAStar(LOTInfo* LOT, int depth, PathfindingMode mode)
 	PathQueue queue = {};
 	const auto& zone = GetRuntimeZoneTable((int)LOT->Zone);
 
-	LOT->SourceBox = ResolveRuntimeBox(LOT->SourceBox);
-	LOT->Head = ResolveRuntimeBox(LOT->Head);
-	LOT->Tail = ResolveRuntimeBox(LOT->Tail);
 
 	// Determine whether A* heuristic should be applied.
 	bool useHeuristic = (mode == PathfindingMode::AStar && LOT->SourceBox != NO_VALUE);
@@ -2927,7 +2705,6 @@ bool SearchLOT_DijkstraAStar(LOTInfo* LOT, int depth, PathfindingMode mode)
 	int currentBox = LOT->Head;
 	while (currentBox != NO_VALUE)
 	{
-		currentBox = ResolveRuntimeBox(currentBox);
 		auto* node = &LOT->Node[currentBox];
 
 		int next = node->nextExpansion;
@@ -2967,7 +2744,6 @@ bool SearchLOT_DijkstraAStar(LOTInfo* LOT, int depth, PathfindingMode mode)
 		// Per-neighbour expansion, shared by compiled overlaps and synthesized seam edges.
 		auto expandNeighbor = [&](int boxNumber, int flags, bool liveEdge)
 		{
-			boxNumber = ResolveRuntimeBox(boxNumber);
 			if (boxNumber == NO_VALUE || boxNumber == headBox)
 				return;
 
@@ -3386,9 +3162,9 @@ void FindAITargetObject(CreatureInfo* creature, int objectNumber, int ocb, bool 
 			const int* zone = GetRuntimeZoneTable((int)creature->LOT.Zone).data();
 			auto* room = &g_Level.Rooms[item.RoomNumber];
 
-			item.BoxNumber = ResolveRuntimeBox(GetSector(room, item.Pose.Position.x - room->Position.x, item.Pose.Position.z - room->Position.z)->PathfindingBoxID);
+			item.BoxNumber = GetSector(room, item.Pose.Position.x - room->Position.x, item.Pose.Position.z - room->Position.z)->PathfindingBoxID;
 			room = &g_Level.Rooms[aiObject.roomNumber];
-			aiObject.boxNumber = ResolveRuntimeBox(GetSector(room, aiObject.pos.Position.x - room->Position.x, aiObject.pos.Position.z - room->Position.z)->PathfindingBoxID);
+			aiObject.boxNumber = GetSector(room, aiObject.pos.Position.x - room->Position.x, aiObject.pos.Position.z - room->Position.z)->PathfindingBoxID;
 
 			if (item.BoxNumber == NO_VALUE || aiObject.boxNumber == NO_VALUE)
 				continue;
@@ -3469,10 +3245,10 @@ int TargetReachable(ItemInfo* item, ItemInfo* enemy)
 	}
 
 	// Don't try to chase enemy into bad boxes.
-	int floorBox = ResolveRuntimeBox(floor->PathfindingBoxID);
+	int floorBox = floor->PathfindingBoxID;
 	for (auto& box : creature.LOT.BadBoxes)
 	{
-		if (ResolveRuntimeBox(box.BoxNumber) == floorBox && box.Count < 0)
+		if (box.BoxNumber == floorBox && box.Count < 0)
 		{
 			isReachable = false;
 			break;
@@ -3524,7 +3300,7 @@ void CreatureAIInfo(ItemInfo* item, AI_INFO* AI)
 	// briefly point at the adjacent room while the creature's feet still resolve to the previous
 	// active floor box, so resolve through collision and fall back to the bottom sector if needed.
 	item->BoxNumber = ResolveCreatureCurrentBox(item);
-	AI->zoneNumber = (item->BoxNumber != NO_VALUE) ? zone[ResolveRuntimeBox(item->BoxNumber)] : NO_VALUE;
+	AI->zoneNumber = (item->BoxNumber != NO_VALUE) ? zone[item->BoxNumber] : NO_VALUE;
 
 	// Friendly creature with no valid target: skip AI computation.
 	if (enemy == nullptr)
@@ -3547,7 +3323,7 @@ void CreatureAIInfo(ItemInfo* item, AI_INFO* AI)
 			AI->enemyZone |= BLOCKED;
 		}
 		else if (item->BoxNumber != NO_VALUE && 
-			creature->LOT.Node[ResolveRuntimeBox(item->BoxNumber)].searchNumber == (creature->LOT.SearchNumber | SEARCH_BLOCKED))
+			creature->LOT.Node[item->BoxNumber].searchNumber == (creature->LOT.SearchNumber | SEARCH_BLOCKED))
 		{
 			AI->enemyZone |= BLOCKED;
 		}
@@ -3751,7 +3527,7 @@ void CreatureMood(ItemInfo* item, AI_INFO* AI, bool isViolent)
 
 	if (item->BoxNumber != NO_VALUE)
 	{
-		int currentBox = ResolveRuntimeBox(item->BoxNumber);
+		int currentBox = item->BoxNumber;
 
 		// Get the next box on the path to target.
 		int endBox = LOT->Node[currentBox].exitBox;
@@ -3767,7 +3543,7 @@ void CreatureMood(ItemInfo* item, AI_INFO* AI, bool isViolent)
 			{
 				do
 				{
-					nextBox = ResolveRuntimeBox(g_Level.Overlaps[overlapIndex].box);
+					nextBox = g_Level.Overlaps[overlapIndex].box;
 					flags = g_Level.Overlaps[overlapIndex++].flags;
 				} while (nextBox != NO_VALUE && ((flags & OVERLAP_END_BIT) == false) && (nextBox != endBox));
 			}
@@ -3816,7 +3592,7 @@ void GetCreatureMood(ItemInfo* item, AI_INFO* AI, bool isViolent)
 	auto* LOT = &creature->LOT;
 
 	// Clear target if creature is in a blocked box.
-	int currentBox = ResolveRuntimeBox(item->BoxNumber);
+	int currentBox = item->BoxNumber;
 	if (currentBox == NO_VALUE || creature->LOT.Node[currentBox].searchNumber == (creature->LOT.SearchNumber | SEARCH_BLOCKED))
 		creature->LOT.RequiredBox = NO_VALUE;
 
@@ -4063,7 +3839,7 @@ Vector3i PredictTargetPosition(ItemInfo& sourceItem, ItemInfo& targetItem, Vecto
 TARGET_TYPE CalculateTarget(Vector3i* target, ItemInfo* item, LOTInfo* LOT)
 {
 	// Set creature's current box for A* heuristic.
-	LOT->SourceBox = ResolveRuntimeBox(item->BoxNumber);
+	LOT->SourceBox = item->BoxNumber;
 
 	// Expand the pathfinding search if needed.
 	UpdateLOT(LOT, g_GameFlow->GetSettings()->Pathfinding.SearchDepth);
@@ -4071,7 +3847,7 @@ TARGET_TYPE CalculateTarget(Vector3i* target, ItemInfo* item, LOTInfo* LOT)
 	// Start with creature's current position as default target.
 	*target = item->Pose.Position;
 
-	int boxNumber = ResolveRuntimeBox(item->BoxNumber);
+	int boxNumber = item->BoxNumber;
 	if (boxNumber == NO_VALUE)
 		return TARGET_TYPE::NO_TARGET;
 
