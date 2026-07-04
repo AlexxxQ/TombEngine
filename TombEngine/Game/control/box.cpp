@@ -728,12 +728,11 @@ static bool TryResolveRouteExitFloorAtVerticalPortal(ItemInfo* item, LOTInfo* LO
 	if (zone[currentBox] == 0 || zone[exitBox] == 0 || zone[currentBox] != zone[exitBox])
 		return false;
 
-	constexpr int routeExitFloorHintFlag = 0x0004;
 	int routeFlags = 0;
 	bool routeExitFloorHint =
 		TryGetCompiledOverlapFlags(currentBox, exitBox, routeFlags) &&
 		OverlapActiveFromBox(currentBox, routeFlags) &&
-		(routeFlags & routeExitFloorHintFlag) != 0;
+		(routeFlags & OVERLAP_ROUTE_EXIT_FLOOR_HINT) != 0;
 
 	if (!routeExitFloorHint)
 		return false;
@@ -2025,79 +2024,18 @@ void BuildPathfindingFlipMetadata()
 	s_boxFlipGroup.assign(boxCount, NO_VALUE);
 	s_boxNativeState.assign(boxCount, 2); // default: present in both states (non-alternated / merged)
 
-	bool hasCompiledMetadata = boxCount > 0;
 	for (int box = 0; box < boxCount; box++)
 	{
-		if ((g_Level.PathfindingBoxes[box].flags & BOX_FLIP_METADATA) == 0)
-		{
-			hasCompiledMetadata = false;
-			break;
-		}
-	}
-
-	if (hasCompiledMetadata)
-	{
-		for (int box = 0; box < boxCount; box++)
-		{
-			int flags = g_Level.PathfindingBoxes[box].flags;
-			int encodedGroup = (flags & BOX_FLIP_GROUP_MASK) >> BOX_FLIP_GROUP_SHIFT;
-			int group = (encodedGroup > 0) ? encodedGroup - 1 : NO_VALUE;
-			int native = (flags & BOX_FLIP_NATIVE_MASK) >> BOX_FLIP_NATIVE_SHIFT;
-
-			s_boxFlipGroup[box] = (group >= 0 && group < MAX_FLIPMAP) ? group : NO_VALUE;
-			s_boxNativeState[box] = (native >= 0 && native <= 2) ? (signed char)native : 2;
-		}
-
-		return;
-	}
-
-	std::vector<std::vector<unsigned char>> stateMasks(boxCount, std::vector<unsigned char>(MAX_FLIPMAP, 0));
-
-	// Pair each flip-base room (flippedRoom set) with its alternate and compare their
-	// sector -> box maps. A box index can appear in different cells in base and alt
-	// geometry, so accumulate per-box state masks first instead of letting the first
-	// single-state occurrence win.
-	for (int roomNumber = 0; roomNumber < (int)g_Level.Rooms.size(); roomNumber++)
-	{
-		auto& room = g_Level.Rooms[roomNumber];
-		if (room.flippedRoom == NO_VALUE || room.flipNumber == NO_VALUE || room.flipNumber < 0 || room.flipNumber >= MAX_FLIPMAP)
+		int flags = g_Level.PathfindingBoxes[box].flags;
+		if ((flags & BOX_FLIP_METADATA) == 0)
 			continue;
 
-		auto markBoxState = [&](int box, unsigned char stateBit)
-		{
-			if (box != NO_VALUE && box >= 0 && box < boxCount)
-				stateMasks[box][room.flipNumber] |= stateBit;
-		};
+		int encodedGroup = (flags & BOX_FLIP_GROUP_MASK) >> BOX_FLIP_GROUP_SHIFT;
+		int group = (encodedGroup > 0) ? encodedGroup - 1 : NO_VALUE;
+		int native = (flags & BOX_FLIP_NATIVE_MASK) >> BOX_FLIP_NATIVE_SHIFT;
 
-		auto& altRoom = g_Level.Rooms[room.flippedRoom];
-		for (const auto& sector : room.Sectors)
-			markBoxState(sector.PathfindingBoxID, 1);
-		for (const auto& sector : altRoom.Sectors)
-			markBoxState(sector.PathfindingBoxID, 2);
-	}
-
-	for (int box = 0; box < boxCount; box++)
-	{
-		int bothGroup = NO_VALUE;
-
-		// If a box is variant in one flip group but merely merged in another, the variant
-		// group must control activation. Otherwise, a base+alt reused index is active in both.
-		for (int group = 0; group < MAX_FLIPMAP; group++)
-		{
-			auto mask = stateMasks[box][group];
-			if (mask == 1 || mask == 2)
-			{
-				s_boxNativeState[box] = (mask == 1) ? 0 : 1;
-				s_boxFlipGroup[box] = group;
-				break;
-			}
-
-			if (mask == 3 && bothGroup == NO_VALUE)
-				bothGroup = group;
-		}
-
-		if (s_boxFlipGroup[box] == NO_VALUE && bothGroup != NO_VALUE)
-			s_boxFlipGroup[box] = bothGroup;
+		s_boxFlipGroup[box] = (group >= 0 && group < MAX_FLIPMAP) ? group : NO_VALUE;
+		s_boxNativeState[box] = (native >= 0 && native <= 2) ? (signed char)native : 2;
 	}
 
 }
@@ -2248,27 +2186,24 @@ static void TryAddLiveSeamEdge(
 	if (!destRoom.Active())
 		return;
 
-	int fromBox = sourceBox;
-	int toBox = destBox;
-	if (fromBox == NO_VALUE || toBox == NO_VALUE || fromBox >= boxCount || toBox >= boxCount || fromBox == toBox)
+	if (sourceBox == NO_VALUE || sourceBox >= boxCount || destBox >= boxCount || sourceBox == destBox)
 		return;
 
-	int fromGroup = (fromBox != sourceBox) ? s_boxFlipGroup[fromBox] : sourceGroup;
-	int destGroup = (toBox != destBox) ? s_boxFlipGroup[toBox] : GetRoomFlipGroup(destRoom);
+	int fromGroup = sourceGroup;
+	int destGroup = GetRoomFlipGroup(destRoom);
 	int sourceState = GetFlipGroupState(fromGroup);
 	int destState = GetFlipGroupState(destGroup);
 	bool mixedGroupSeam = fromGroup != destGroup && sourceState != destState;
 	bool activeVerticalPortalSeam =
 		allowActiveVerticalPortalEdge &&
-		fromBox >= 0 &&
-		fromBox < (int)s_runtimeActiveBoxes.size() &&
-		toBox >= 0 &&
-		toBox < (int)s_runtimeActiveBoxes.size() &&
-		s_runtimeActiveBoxes[fromBox] != 0 &&
-		s_runtimeActiveBoxes[toBox] != 0;
-	int dh = g_Level.PathfindingBoxes[fromBox].height - g_Level.PathfindingBoxes[toBox].height;
+		sourceBox >= 0 &&
+		sourceBox < (int)s_runtimeActiveBoxes.size() &&
+		destBox < (int)s_runtimeActiveBoxes.size() &&
+		s_runtimeActiveBoxes[sourceBox] != 0 &&
+		s_runtimeActiveBoxes[destBox] != 0;
+	int dh = g_Level.PathfindingBoxes[sourceBox].height - g_Level.PathfindingBoxes[destBox].height;
 	int compiledFlags = 0;
-	bool hasCompiledOverlap = TryGetCompiledOverlapFlags(fromBox, toBox, compiledFlags);
+	bool hasCompiledOverlap = TryGetCompiledOverlapFlags(sourceBox, destBox, compiledFlags);
 
 	if (!mixedGroupSeam && !activeVerticalPortalSeam)
 		return; // horizontal same-state live neighbours must not resurrect inactive phantom boxes
@@ -2279,7 +2214,7 @@ static void TryAddLiveSeamEdge(
 	if (abs(dh) > BLOCK(2))
 		return;
 
-	AddRuntimeSeamEdge(fromBox, toBox, hasCompiledOverlap ? compiledFlags : 0);
+	AddRuntimeSeamEdge(sourceBox, destBox, hasCompiledOverlap ? compiledFlags : 0);
 }
 
 // Synthesize live adjacencies the 2-pass compiler can't represent safely. In mixed flip states,
