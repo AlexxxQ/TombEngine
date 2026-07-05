@@ -72,6 +72,7 @@ using PathQueue = std::priority_queue<QueueElement, std::vector<QueueElement>, s
 static bool IsBoxActiveNow(int box);
 static bool IsBoxUsableNow(int box, bool liveEdge);
 static bool OverlapActiveFromBox(int box, int overlapFlags);
+static int ResolveRuntimeBox(int box);
 static bool TryGetCompiledOverlapFlags(int fromBox, int toBox, int& flags);
 static bool TryResolveRouteExitFloorAtVerticalPortal(ItemInfo* item, LOTInfo* LOT, Vector3i prevPos, const int* zone,
 	int currentBox, int boxHeight, FloorInfo*& floor, int& floorBox, short& roomNumber, int& height);
@@ -184,6 +185,7 @@ static void DrawBox(int boxIndex, const Vector3& color)
 
 void DrawLaraPathfinding(int boxIndex)
 {
+	boxIndex = ResolveRuntimeBox(boxIndex);
 	if (boxIndex <= NO_VALUE || boxIndex >= g_Level.PathfindingBoxes.size())
 		return;
 
@@ -214,7 +216,7 @@ void DrawLaraPathfinding(int boxIndex)
 
 		auto overlap = g_Level.Overlaps[index];
 
-		int overlapBox = overlap.box;
+		int overlapBox = ResolveRuntimeBox(overlap.box);
 		if (IsBoxUsableNow(overlapBox, false) && OverlapActiveFromBox(boxIndex, overlap.flags))
 			DrawBox(overlapBox, Vector3(1, 1, 0));
 
@@ -247,9 +249,9 @@ void DrawItemPathfinding(int itemNumber)
 
 	auto* creature = GetCreatureInfo(&item);
 	const auto& LOT = creature->LOT;
-	int itemBox = item.BoxNumber;
-	int targetBox = LOT.TargetBox;
-	int requiredBox = LOT.RequiredBox;
+	int itemBox = ResolveRuntimeBox(item.BoxNumber);
+	int targetBox = ResolveRuntimeBox(LOT.TargetBox);
+	int requiredBox = ResolveRuntimeBox(LOT.RequiredBox);
 
 	// Green box: current box (where creature is).
 	if (itemBox != NO_VALUE)
@@ -829,7 +831,7 @@ bool CreaturePathfind(ItemInfo* item, Vector3i prevPos, short angle, short tilt)
 	if (floor->PathfindingBoxID == NO_VALUE)
 		return false;
 
-	int floorBox = floor->PathfindingBoxID;
+	int floorBox = ResolveRuntimeBox(floor->PathfindingBoxID);
 	int height = g_Level.PathfindingBoxes[floorBox].height;
 
 	// PORTAL-Y RETRY (movement, active-guarded): at a vertical portal the head-Y floor probe
@@ -1927,8 +1929,17 @@ static std::vector<int>         s_runtimeZones[(int)ZoneType::MaxZone];
 static std::vector<std::vector<RuntimePathEdge>> s_seamEdges; // per box: live room-sector neighbours that compiled overlaps can't represent safely
 static std::vector<char>        s_liveEdgeBoxes; // boxes reachable through live room-sector edges, even if global metadata says inactive
 static std::vector<char>        s_runtimeActiveBoxes; // boxes present in currently active room-sector data
+static std::vector<int>         s_runtimeBoxAliases; // inactive overlay boxes redirected to active live boxes
 
 static std::vector<std::vector<RuntimePathEdge>> s_reverseEdges; // per target box: boxes that can move forward into it
+
+static int ResolveRuntimeBox(int box)
+{
+	if (box < 0 || box >= (int)s_runtimeBoxAliases.size())
+		return box;
+
+	return s_runtimeBoxAliases[box];
+}
 
 static const std::vector<RuntimePathEdge>& GetSeamEdgesForBox(int box)
 {
@@ -2144,7 +2155,21 @@ static bool AddRuntimeSeamEdge(int fromBox, int toBox, int flags = 0)
 	return true;
 }
 
-static std::vector<char> BuildActiveLiveBoxSet()
+static int GetBoxOverlapAreaXZ(int a, int b)
+{
+	int boxCount = (int)g_Level.PathfindingBoxes.size();
+	if (a < 0 || a >= boxCount || b < 0 || b >= boxCount)
+		return 0;
+
+	auto& A = g_Level.PathfindingBoxes[a];
+	auto& B = g_Level.PathfindingBoxes[b];
+	int xOverlap = std::min((int)A.bottom, (int)B.bottom) - std::max((int)A.top, (int)B.top);
+	int zOverlap = std::min((int)A.right, (int)B.right) - std::max((int)A.left, (int)B.left);
+
+	return (xOverlap > 0 && zOverlap > 0) ? xOverlap * zOverlap : 0;
+}
+
+static std::vector<char> BuildActiveLiveBoxSet(std::vector<int>& activeLiveBoxes)
 {
 	int boxCount = (int)g_Level.PathfindingBoxes.size();
 	std::vector<char> activeLiveBoxSet(boxCount, false);
@@ -2159,14 +2184,49 @@ static std::vector<char> BuildActiveLiveBoxSet()
 			int box = sector.PathfindingBoxID;
 			if (box != NO_VALUE &&
 				box < boxCount &&
+				IsBoxActiveNow(box) &&
 				!activeLiveBoxSet[box])
 			{
+				activeLiveBoxes.push_back(box);
 				activeLiveBoxSet[box] = true;
 			}
 		}
 	}
 
 	return activeLiveBoxSet;
+}
+
+static void BuildRuntimeBoxAliases(const std::vector<int>& activeLiveBoxes, const std::vector<char>& activeLiveBoxSet)
+{
+	int boxCount = (int)g_Level.PathfindingBoxes.size();
+	s_runtimeBoxAliases.resize(boxCount);
+	for (int box = 0; box < boxCount; box++)
+		s_runtimeBoxAliases[box] = box;
+
+	for (int overlayBox = 0; overlayBox < boxCount; overlayBox++)
+	{
+		if (activeLiveBoxSet[overlayBox] != 0)
+			continue;
+
+		int bestBox = NO_VALUE;
+		int bestArea = 0;
+
+		for (int activeBox : activeLiveBoxes)
+		{
+			int area = GetBoxOverlapAreaXZ(overlayBox, activeBox);
+			if (area <= 0)
+				continue;
+
+			if (area > bestArea)
+			{
+				bestBox = activeBox;
+				bestArea = area;
+			}
+		}
+
+		if (bestBox != NO_VALUE)
+			s_runtimeBoxAliases[overlayBox] = bestBox;
+	}
 }
 
 static void TryAddLiveSeamEdge(
@@ -2186,24 +2246,27 @@ static void TryAddLiveSeamEdge(
 	if (!destRoom.Active())
 		return;
 
-	if (sourceBox == NO_VALUE || sourceBox >= boxCount || destBox >= boxCount || sourceBox == destBox)
+	int fromBox = ResolveRuntimeBox(sourceBox);
+	int toBox = ResolveRuntimeBox(destBox);
+	if (fromBox == NO_VALUE || toBox == NO_VALUE || fromBox >= boxCount || toBox >= boxCount || fromBox == toBox)
 		return;
 
-	int fromGroup = sourceGroup;
-	int destGroup = GetRoomFlipGroup(destRoom);
+	int fromGroup = (fromBox != sourceBox) ? s_boxFlipGroup[fromBox] : sourceGroup;
+	int destGroup = (toBox != destBox) ? s_boxFlipGroup[toBox] : GetRoomFlipGroup(destRoom);
 	int sourceState = GetFlipGroupState(fromGroup);
 	int destState = GetFlipGroupState(destGroup);
 	bool mixedGroupSeam = fromGroup != destGroup && sourceState != destState;
 	bool activeVerticalPortalSeam =
 		allowActiveVerticalPortalEdge &&
-		sourceBox >= 0 &&
-		sourceBox < (int)s_runtimeActiveBoxes.size() &&
-		destBox < (int)s_runtimeActiveBoxes.size() &&
-		s_runtimeActiveBoxes[sourceBox] != 0 &&
-		s_runtimeActiveBoxes[destBox] != 0;
-	int dh = g_Level.PathfindingBoxes[sourceBox].height - g_Level.PathfindingBoxes[destBox].height;
+		fromBox >= 0 &&
+		fromBox < (int)s_runtimeActiveBoxes.size() &&
+		toBox >= 0 &&
+		toBox < (int)s_runtimeActiveBoxes.size() &&
+		s_runtimeActiveBoxes[fromBox] != 0 &&
+		s_runtimeActiveBoxes[toBox] != 0;
+	int dh = g_Level.PathfindingBoxes[fromBox].height - g_Level.PathfindingBoxes[toBox].height;
 	int compiledFlags = 0;
-	bool hasCompiledOverlap = TryGetCompiledOverlapFlags(sourceBox, destBox, compiledFlags);
+	bool hasCompiledOverlap = TryGetCompiledOverlapFlags(fromBox, toBox, compiledFlags);
 
 	if (!mixedGroupSeam && !activeVerticalPortalSeam)
 		return; // horizontal same-state live neighbours must not resurrect inactive phantom boxes
@@ -2214,7 +2277,7 @@ static void TryAddLiveSeamEdge(
 	if (abs(dh) > BLOCK(2))
 		return;
 
-	AddRuntimeSeamEdge(sourceBox, destBox, hasCompiledOverlap ? compiledFlags : 0);
+	AddRuntimeSeamEdge(fromBox, toBox, hasCompiledOverlap ? compiledFlags : 0);
 }
 
 // Synthesize live adjacencies the 2-pass compiler can't represent safely. In mixed flip states,
@@ -2227,8 +2290,10 @@ void BuildSeamEdges()
 	int boxCount = (int)g_Level.PathfindingBoxes.size();
 	s_seamEdges.assign(boxCount, {});
 	s_liveEdgeBoxes.assign(boxCount, false);
-	auto activeLiveBoxSet = BuildActiveLiveBoxSet();
+	std::vector<int> activeLiveBoxes;
+	auto activeLiveBoxSet = BuildActiveLiveBoxSet(activeLiveBoxes);
 	s_runtimeActiveBoxes = activeLiveBoxSet;
+	BuildRuntimeBoxAliases(activeLiveBoxes, activeLiveBoxSet);
 
 	static const int dx[4] = { BLOCK(1), -BLOCK(1), 0, 0 };
 	static const int dz[4] = { 0, 0, BLOCK(1), -BLOCK(1) };
