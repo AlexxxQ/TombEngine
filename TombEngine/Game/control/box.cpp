@@ -40,6 +40,7 @@
 #include "Game/collision/Los.h"
 #include "Game/collision/Point.h"
 #include "Game/control/control.h"
+#include "Game/control/los.h"
 #include "Game/control/lot.h"
 #include "Game/effects/smoke.h"
 #include "Game/effects/tomb4fx.h"
@@ -144,6 +145,23 @@ static Vector3 GetBoxCenter(int boxIndex)
 	float z = ((float)currBox.top + (float)(currBox.bottom - currBox.top) / 2.0f) * BLOCK(1);
 
 	return Vector3(z, y, x);
+}
+
+// True if two boxes share XZ footprint (vertically stacked). Lets the swimmer breadcrumb
+// distinguish a vertical shaft (rise/sink toward the enemy) from a separate deep corridor.
+static bool BoxesXZOverlap(int boxA, int boxB)
+{
+	if (boxA <= NO_VALUE || boxB <= NO_VALUE ||
+		boxA >= (int)g_Level.PathfindingBoxes.size() ||
+		boxB >= (int)g_Level.PathfindingBoxes.size())
+		return false;
+
+	const auto& a = g_Level.PathfindingBoxes[boxA];
+	const auto& b = g_Level.PathfindingBoxes[boxB];
+
+	bool xOverlap = (a.top < b.bottom) && (b.top < a.bottom);
+	bool zOverlap = (a.left < b.right) && (b.left < a.right);
+	return xOverlap && zOverlap;
 }
 
 static void DrawBox(int boxIndex, const Vector3& color)
@@ -556,6 +574,24 @@ static void AddBadBox(LOTInfo* LOT, int boxNumber)
 	if (boxNumber == NO_VALUE)
 		return;
 
+	// SWIMMER GUARD: never blacklist a box on the swimmer's active route (enemy box,
+	// current box, next box on the chain). Swimmers bump ceilings/surfaces in tight
+	// portal boxes; penalizing the transit box makes BFS detour "through walls".
+	// Genuine stalls are recovered by the time-based StuckTimer unstuck instead.
+	if (LOT->Fly != NO_FLYING)
+	{
+		if (LOT->RequiredBox != NO_VALUE && boxNumber == LOT->RequiredBox)
+			return;
+
+		if (LOT->SourceBox != NO_VALUE)
+		{
+			if (boxNumber == LOT->SourceBox)
+				return;
+			if (boxNumber == LOT->Node[LOT->SourceBox].exitBox)
+				return;
+		}
+	}
+
 	// Don't add bad boxes if penalty system is disabled.
 	if (g_GameFlow->GetSettings()->Pathfinding.CollisionPenaltyThreshold <= EPSILON)
 		return;
@@ -661,6 +697,107 @@ static void UpdateBadBoxes(ItemInfo* item)
 		// Invalidate the bad box until the next query.
 		badBox.Valid = false;
 	}
+}
+
+/**
+ * @brief Puts a box straight into bad-box cooldown (skipping penalty accumulation),
+ * so the very next BFS expansion routes around it. Used by the stuck detector.
+ */
+static void ForceBadBoxCooldown(LOTInfo* LOT, int boxNumber)
+{
+	if (boxNumber == NO_VALUE)
+		return;
+
+	int penaltyCooldown = (int)(g_GameFlow->GetSettings()->Pathfinding.CollisionPenaltyCooldown * FPS);
+	if (penaltyCooldown <= 0)
+		penaltyCooldown = (int)(5 * FPS); // Sane fallback if penalty system is disabled.
+
+	// Reuse an existing slot for this box if present.
+	for (auto& badBox : LOT->BadBoxes)
+	{
+		if (badBox.BoxNumber == boxNumber)
+		{
+			badBox.Valid = true;
+			badBox.Count = -penaltyCooldown;
+			return;
+		}
+	}
+
+	// Otherwise claim a free slot.
+	for (auto& badBox : LOT->BadBoxes)
+	{
+		if (badBox.BoxNumber != NO_VALUE)
+			continue;
+
+		badBox.Valid = true;
+		badBox.BoxNumber = boxNumber;
+		badBox.Count = -penaltyCooldown;
+		return;
+	}
+}
+
+/**
+ * @brief Returns true if the BFS chain from startBox toward LOT->TargetBox contains
+ * a vertical transition (consecutive box height delta above threshold).
+ * Gates the OG-faithful Y mode: flat cruise chains use TR4-style Y logic; chains
+ * through a vertical portal need the per-tick clamp + breadcrumb instead.
+ */
+static bool ChainHasVerticalTransition(const LOTInfo* LOT, int startBox, int threshold)
+{
+	if (startBox == NO_VALUE || LOT->TargetBox == NO_VALUE)
+		return false;
+
+	constexpr int MAX_HOPS = 32;
+	int currBox = startBox;
+	int hops = 0;
+
+	while (hops++ < MAX_HOPS)
+	{
+		if (currBox == LOT->TargetBox)
+			return false;
+
+		int nextBox = LOT->Node[currBox].exitBox;
+		if (nextBox == NO_VALUE || nextBox == currBox)
+			return false;
+
+		if ((LOT->Node[nextBox].searchNumber & SEARCH_NUMBER) != (LOT->SearchNumber & SEARCH_NUMBER))
+			return false;
+
+		if (g_Level.PathfindingBoxes[nextBox].flags & LOT->BlockMask)
+			return false;
+
+		int currH = g_Level.PathfindingBoxes[currBox].height;
+		int nextH = g_Level.PathfindingBoxes[nextBox].height;
+		if (std::abs(currH - nextH) > threshold)
+			return true;
+
+		currBox = nextBox;
+	}
+	return false;
+}
+
+/**
+ * @brief True if a water creature should use OG-faithful Y logic: swimming
+ * (Water/Amphibious zone), Bored mood, flat chain (no vertical portal).
+ * Then the breadcrumb is skipped and CreaturePathfind drops the per-tick descent
+ * clamp -- smooth TR4-style cruise with no nodding over rough floors. Attacking,
+ * escaping or portal-crossing creatures keep the full TE logic.
+ */
+static bool ShouldUseOgWaterYMode(const CreatureInfo* creature, const ItemInfo* item, const LOTInfo* LOT)
+{
+	if (creature == nullptr || item == nullptr || LOT == nullptr)
+		return false;
+
+	if (LOT->Fly == NO_FLYING || (LOT->Zone != ZoneType::Water && LOT->Zone != ZoneType::Amphibious))
+		return false;
+
+	if (creature->Mood != MoodType::Bored)
+		return false;
+
+	if (ChainHasVerticalTransition(LOT, item->BoxNumber, CLICK(2)))
+		return false;
+
+	return true;
 }
 
 /**
@@ -884,20 +1021,26 @@ bool CreaturePathfind(ItemInfo* item, Vector3i prevPos, short angle, short tilt)
 			CreatureTilt(item, (tilt * 2));
 	}
 
-	// CREATURE-CREATURE COLLISION:
-	// Check for collision with other creatures and turn to avoid.
-
+	// CREATURE-CREATURE COLLISION: water creatures are excluded -- swim oscillation
+	// locks two crossing fish into a mutual orbit; they pass through each other instead.
 	short biffAngle;
-	if (item->ObjectNumber != ID_TYRANNOSAUR && item->Animation.Velocity.z && item->HitPoints > 0)
+	if (item->ObjectNumber != ID_TYRANNOSAUR &&
+		item->Animation.Velocity.z &&
+		item->HitPoints > 0 &&
+		LOT->Zone != ZoneType::Water)
+	{
 		biffAngle = CreatureCreature(item->Index);
+	}
 	else
+	{
 		biffAngle = 0;
+	}
 
-	// If colliding with another creature, turn away.
+	// Turn away: proportional for small bearings, capped at BIFF_AVOID_TURN.
 	if (biffAngle)
 	{
 		if (abs(biffAngle) < BIFF_AVOID_TURN)
-			item->Pose.Orientation.y -= BIFF_AVOID_TURN;
+			item->Pose.Orientation.y -= biffAngle;
 		else if (biffAngle > 0)
 			item->Pose.Orientation.y -= BIFF_AVOID_TURN;
 		else
@@ -938,6 +1081,24 @@ bool CreaturePathfind(ItemInfo* item, Vector3i prevPos, short angle, short tilt)
 		}
 
 		height = GetFloorHeight(floor, item->Pose.Position.x, y, item->Pose.Position.z);
+
+		// Asymmetric descent clamp for swimmers (Water + Amphibious): never dive below
+		// the floor under the current XZ (minus 1 click). Prevents crashing into a
+		// shallow local floor while chasing a deep target past a floor portal -- the
+		// dive unblocks once horizontal motion carries the creature over the deep
+		// sector. Skipped in OG Y mode (flat bored cruise sets a safe altitude itself).
+		bool ogYMode = ShouldUseOgWaterYMode(creature, item, LOT);
+
+		if ((LOT->Zone == ZoneType::Water || LOT->Zone == ZoneType::Amphibious) && flyRate > 0 && !ogYMode)
+		{
+			int swimCeilingY = height - CLICK(1);
+			int allowedDelta = swimCeilingY - item->Pose.Position.y;
+			if (allowedDelta < 0)
+				allowedDelta = 0;
+			if (flyRate > allowedDelta)
+				flyRate = allowedDelta;
+		}
+
 		if (item->Pose.Position.y + flyRate <= height)
 		{
 			ceiling = GetCeiling(floor, item->Pose.Position.x, y, item->Pose.Position.z);
@@ -953,12 +1114,37 @@ bool CreaturePathfind(ItemInfo* item, Vector3i prevPos, short angle, short tilt)
 			{
 				if (topPos < ceiling)
 				{
-					// Already stuck in ceiling - push back and swim down.
-					item->Pose.Position = prevPos;
-					flyRate = LOT->Fly;
+					// Head inside the ceiling. Descending past a portal lip (not rising,
+					// water below): revert only XZ and keep sinking -- the head clears
+					// the lip in a few frames, no penalty. Otherwise: full revert, force
+					// a dive and feed the BadBox penalty so overhang-stuck creatures
+					// reroute.
+					bool wasRising = item->Pose.Position.y < prevPos.y;
+					bool canDescend = item->Pose.Position.y < (height - CLICK(1));
+
+					if (!wasRising && canDescend)
+					{
+						item->Pose.Position.x = prevPos.x;
+						item->Pose.Position.z = prevPos.z;
+						flyRate = LOT->Fly;
+					}
+					else
+					{
+						// Already stuck in ceiling - push back and swim down.
+						item->Pose.Position = prevPos;
+						flyRate = LOT->Fly;
+						// (AddBadBox internally skips the enemy's own box for swimmers.)
+						AddBadBox(LOT, floor->PathfindingBoxID);
+					}
 				}
 				else
+				{
 					creature->FlyRate = flyRate = 0;
+
+					// Feed the BadBox penalty so ceiling-stuck creatures eventually
+					// reroute (cooldown -> fresh BFS around the overhang).
+					AddBadBox(LOT, floor->PathfindingBoxID);
+				}
 			}
 
 			if (g_GameFlow->GetSettings()->Pathfinding.WaterSurfaceAvoidance)
@@ -966,9 +1152,22 @@ bool CreaturePathfind(ItemInfo* item, Vector3i prevPos, short angle, short tilt)
 				if (LOT->Zone == ZoneType::Water)
 				{
 					// New TEN behaviour: clamp water creatures below water level.
-					int waterHeight = GetPointCollision(*item).GetWaterSurfaceHeight();
-					if (topPos + flyRate <= waterHeight)
+					auto pointColl = GetPointCollision(*item);
+					int waterHeight = pointColl.GetWaterSurfaceHeight();
+					bool inWaterRoom = TestEnvironment(RoomEnvFlags::ENV_FLAG_WATER, pointColl.GetRoomNumber());
+
+					if (!inWaterRoom)
 					{
+						// Drifted out of water into a dry room: full revert + penalty
+						// so BFS eventually routes around the offending box.
+						item->Pose.Position = prevPos;
+						creature->FlyRate = flyRate = 0;
+						AddBadBox(LOT, floor->PathfindingBoxID);
+					}
+					else if (waterHeight != NO_HEIGHT && topPos + flyRate <= waterHeight)
+					{
+						// Clamp below the water surface. NO_HEIGHT = closed underwater
+						// column (no air above): no clamp needed.
 						item->Pose.Position.y = prevPos.y;
 						creature->FlyRate = flyRate = std::max(0, flyRate);
 					}
@@ -1635,7 +1834,7 @@ bool EscapeBox(ItemInfo* item, ItemInfo* enemy, int boxNumber)
  * @param LOT Pointer to the creature's LOTInfo.
  * @param boxNumber The box to target.
  */
-void TargetBox(LOTInfo* LOT, int boxNumber)
+void TargetBox(LOTInfo* LOT, int boxNumber, ItemInfo* item)
 {
 	if (boxNumber == NO_VALUE)
 		return;
@@ -1648,11 +1847,49 @@ void TargetBox(LOTInfo* LOT, int boxNumber)
 	LOT->Target.z = (int)((box->left * BLOCK(1)) + (float)GetRandomControl() * (((float)(box->right - box->left) - 1.0f) / 32.0f) + CLICK(2.0f));
 	LOT->RequiredBox = boxNumber;
 
-	// Flying creatures target slightly above the floor.
+	// Flying creatures target slightly above the floor. Water creatures use a larger
+	// BLOCK(1) cruise offset instead of STEPUP_HEIGHT to avoid bottom-skimming on
+	// sloped water floors (the per-tick clamp can still pull them down when needed).
 	if (LOT->Fly == NO_FLYING)
+	{
 		LOT->Target.y = box->height;
+	}
+	else if (LOT->Zone == ZoneType::Water || LOT->Zone == ZoneType::Amphibious)
+	{
+		// Default cruise altitude = 1 block above this box's floor.
+		int cruiseY = box->height - BLOCK(1);
+
+		// CRUISE-ALTITUDE RANDOMIZATION: in a stacked water column all boxes share one
+		// deep floor, so a fixed cruise glues everyone to the bottom. Roll a random
+		// altitude between just below the surface (GetWaterTopHeight) and the default
+		// cruise, re-rolled per wander target (needs the item to probe the surface).
+		// Amphibious shares this so a bored croc patrols near the surface like in OG.
+		if (item != nullptr)
+		{
+			int waterTop = GetPointCollision(*item).GetWaterTopHeight();
+			if (waterTop != NO_HEIGHT)
+			{
+				// Keep a margin below the surface so the body stays submerged.
+				int ceilingY = waterTop + CLICK(2);
+				if (ceilingY < cruiseY) // there is vertical room to vary
+					cruiseY = ceilingY + (int)((float)GetRandomControl() * (float)(cruiseY - ceilingY) / 32768.0f);
+			}
+
+			// SLOPED-CEILING CLAMP: re-probe the lid at the TARGET column and keep a
+			// 2-click margin -- in a sealed stack the ceiling can slope below the
+			// altitude rolled at the creature's own column.
+			int tRoom = FindRoomNumber(Vector3i(LOT->Target.x, item->Pose.Position.y, LOT->Target.z), item->RoomNumber);
+			int ceilAtTarget = GetPointCollision(Vector3i(LOT->Target.x, item->Pose.Position.y, LOT->Target.z), tRoom).GetWaterTopHeight();
+			if (ceilAtTarget != NO_HEIGHT && cruiseY < ceilAtTarget + CLICK(2))
+				cruiseY = ceilAtTarget + CLICK(2);
+		}
+
+		LOT->Target.y = cruiseY;
+	}
 	else
+	{
 		LOT->Target.y = box->height - STEPUP_HEIGHT;
+	}
 }
 
 /**
@@ -1731,8 +1968,15 @@ bool CanExpandToBox(LOTInfo* LOT, int fromBox, int toBox, int overlapFlags, int 
 		return false;
 
 	// HEIGHT CHECK: Can creature traverse the height difference?
+	// AMPHIBIOUS WET EDGE = SWIMMING: water/shallow <-> water/shallow edges are exempt
+	// from the CURRENT Step/Drop (a beached croc carries the land step, which would
+	// otherwise block routes back into deep water). Wet<->dry keeps the height gate.
 	int delta = to.height - from.height;
-	if ((delta > LOT->Step || delta < LOT->Drop) && (!(overlapFlags & OVERLAP_MONKEY) || !LOT->CanMonkey))
+	bool amphibiousSwimEdge = LOT->Zone == ZoneType::Amphibious &&
+		(from.flags & (BOX_WATER | BOX_SHALLOW)) != 0 &&
+		(to.flags & (BOX_WATER | BOX_SHALLOW)) != 0;
+	if (!amphibiousSwimEdge &&
+		(delta > LOT->Step || delta < LOT->Drop) && (!(overlapFlags & OVERLAP_MONKEY) || !LOT->CanMonkey))
 		return false;
 
 	// JUMP CHECK: Does this overlap require jumping?
@@ -1897,6 +2141,18 @@ bool SearchLOT_DijkstraAStar(LOTInfo* LOT, int depth, PathfindingMode mode)
 	// A* heuristic target (creature's source box center).
 	auto sourceCenter = useHeuristic ? GetBoxCenter(LOT->SourceBox) : Vector3::Zero;
 
+	// COST METRIC: swimmers/flyers use XZ-only distance -- box centre Y is the floor
+	// height, which makes vertical-portal hops absurdly expensive and detours the
+	// search away from targets directly above/below. Ground creatures keep 3D cost.
+	bool flatCost = (LOT->Fly != NO_FLYING);
+	auto boxDist = [flatCost](const Vector3& a, const Vector3& b) -> float
+	{
+		if (flatCost)
+			return Vector3::Distance(Vector3(a.x, 0.0f, a.z), Vector3(b.x, 0.0f, b.z));
+
+		return Vector3::Distance(a, b);
+	};
+
 	// Move legacy Head/Tail expansion list into priority queue.
 	int currentBox = LOT->Head;
 	while (currentBox != NO_VALUE)
@@ -1907,7 +2163,7 @@ bool SearchLOT_DijkstraAStar(LOTInfo* LOT, int depth, PathfindingMode mode)
 		node->nextExpansion = NO_VALUE;
 
 		float pathCost = node->cost;
-		float heuristicCost = useHeuristic ? Vector3::Distance(GetBoxCenter(currentBox), sourceCenter) : 0.0f;
+		float heuristicCost = useHeuristic ? boxDist(GetBoxCenter(currentBox), sourceCenter) : 0.0f;
 
 		queue.push({ pathCost + heuristicCost, pathCost, currentBox });
 
@@ -1962,10 +2218,10 @@ bool SearchLOT_DijkstraAStar(LOTInfo* LOT, int depth, PathfindingMode mode)
 
 				// Compute traversal cost between box centers.
 				auto  neighborCenter = GetBoxCenter(boxNumber);
-				float edgeCost = Vector3::Distance(currentCenter, neighborCenter);
+				float edgeCost = boxDist(currentCenter, neighborCenter);
 
 				float newPathCost = node->cost + edgeCost;
-				float heuristicCost = useHeuristic ? Vector3::Distance(neighborCenter, sourceCenter) : 0.0f;
+				float heuristicCost = useHeuristic ? boxDist(neighborCenter, sourceCenter) : 0.0f;
 				float newEstimatedCost = newPathCost + heuristicCost;
 
 				// Detect new search iteration versus same search number.
@@ -2500,7 +2756,27 @@ void CreatureAIInfo(ItemInfo* item, AI_INFO* AI)
 
 	// Update creature's current box and zone.
 	item->BoxNumber = GetSector(room, item->Pose.Position.x - room->Position.x, item->Pose.Position.z - room->Position.z)->PathfindingBoxID;
-	AI->zoneNumber = zone[item->BoxNumber];
+
+	// OFF-MAP RESCUE: if the creature drifted onto a void sector, teleport it back
+	// to the last valid position; otherwise remember the current one.
+	if (item->BoxNumber == NO_VALUE)
+	{
+		if (creature->LastValidBox != NO_VALUE)
+		{
+			item->Pose.Position = creature->LastValidPos;
+			item->BoxNumber = creature->LastValidBox;
+			if (creature->LastValidRoom != NO_VALUE && creature->LastValidRoom != item->RoomNumber)
+				ItemNewRoom(item->Index, creature->LastValidRoom);
+		}
+	}
+	else
+	{
+		creature->LastValidBox = item->BoxNumber;
+		creature->LastValidPos = item->Pose.Position;
+		creature->LastValidRoom = item->RoomNumber;
+	}
+
+	AI->zoneNumber = (item->BoxNumber != NO_VALUE) ? zone[item->BoxNumber] : NO_VALUE;
 
 	// Friendly creature with no valid target: skip AI computation.
 	if (enemy == nullptr)
@@ -2626,11 +2902,11 @@ void CreatureMood(ItemInfo* item, AI_INFO* AI, bool isViolent)
 				// If enemy is reachable and box allows stalking, use it (keeps creature near enemy).
 				if (StalkBox(item, enemy, boxNumber) && enemy->HitPoints > 0)
 				{
-					TargetBox(LOT, boxNumber);
+					TargetBox(LOT, boxNumber, item);
 				}
 				else if (LOT->RequiredBox == NO_VALUE)
 				{
-					TargetBox(LOT, boxNumber);
+					TargetBox(LOT, boxNumber, item);
 				}
 			}
 		}
@@ -2640,7 +2916,7 @@ void CreatureMood(ItemInfo* item, AI_INFO* AI, bool isViolent)
 			boxNumber = GetRandomBox(*LOT);
 			if (ValidBox(item, AI->zoneNumber, boxNumber) && !StalkBox(item, enemy, boxNumber))
 			{
-				TargetBox(LOT, boxNumber);
+				TargetBox(LOT, boxNumber, item);
 			}
 		}
 
@@ -2670,13 +2946,13 @@ void CreatureMood(ItemInfo* item, AI_INFO* AI, bool isViolent)
 			// Good escape box - far from enemy and in retreat direction.
 			if (EscapeBox(item, enemy, boxNumber))
 			{
-				TargetBox(LOT, boxNumber);
+				TargetBox(LOT, boxNumber, item);
 			}
 			// Not a good escape, but if in same zone as enemy and can stalk, switch to stalking.
 			// Non-violent creatures might recover courage and re-engage.
 			else if (AI->zoneNumber == AI->enemyZone && StalkBox(item, enemy, boxNumber) && !isViolent)
 			{
-				TargetBox(LOT, boxNumber);
+				TargetBox(LOT, boxNumber, item);
 				creature->Mood = MoodType::Stalk;
 			}
 		}
@@ -2694,12 +2970,12 @@ void CreatureMood(ItemInfo* item, AI_INFO* AI, bool isViolent)
 				// Found a good stalking position.
 				if (StalkBox(item, enemy, boxNumber))
 				{
-					TargetBox(LOT, boxNumber);
+					TargetBox(LOT, boxNumber, item);
 				}
 				// No good stalk box - just wander, maybe go back to bored.
 				else if (LOT->RequiredBox == NO_VALUE)
 				{
-					TargetBox(LOT, boxNumber);
+					TargetBox(LOT, boxNumber, item);
 					// Lost access to enemy's zone - give up stalking.
 					if (AI->zoneNumber != AI->enemyZone)
 						creature->Mood = MoodType::Bored;
@@ -2713,9 +2989,74 @@ void CreatureMood(ItemInfo* item, AI_INFO* AI, bool isViolent)
 	// Process bad box checks.
 	UpdateBadBoxes(item);
 
+	// TIME-BASED STUCK DETECTION (swimmers): the per-frame BadBox penalty never
+	// accumulates for swimmers (XZ swim oscillation), so measure time spent in the
+	// SAME box while a different target box is pending. On timeout, cool the exitBox
+	// (likely a phantom overlap) and reflood around it.
+	bool isSwimmer = (LOT->Fly != NO_FLYING) &&
+		(LOT->Zone == ZoneType::Water || LOT->Zone == ZoneType::Amphibious);
+
+	if (isSwimmer && item->BoxNumber != NO_VALUE)
+	{
+		int stuckTimeout = 10 * FPS; // 10 seconds. Slow swimmers (shark) can legitimately
+		                             // spin in one box for several seconds; 5s caused false triggers.
+		bool hasGoal = (LOT->TargetBox != NO_VALUE) && (item->BoxNumber != LOT->TargetBox);
+
+		if (!hasGoal || item->BoxNumber != creature->StuckBox)
+		{
+			// Entered a new box (progress) or has no goal -- reset the timer.
+			creature->StuckBox = item->BoxNumber;
+			creature->StuckTimer = 0;
+		}
+		else
+		{
+			creature->StuckTimer++;
+			if (creature->StuckTimer >= stuckTimeout)
+			{
+				int exitBox = LOT->Node[item->BoxNumber].exitBox;
+
+				// ANTI-STRAND: only blacklist exitBox if another valid neighbour exists;
+				// a sole forward connection must stay routable (the off-map rescue in
+				// CreatureAIInfo covers the worst case).
+				bool hasAlternative = false;
+				if (exitBox != NO_VALUE && exitBox != item->BoxNumber)
+				{
+					int* zoneArr = g_Level.Zones[(int)LOT->Zone][(int)FlipStatus].data();
+					int curZone = zoneArr[item->BoxNumber];
+					const auto& curBox = g_Level.PathfindingBoxes[item->BoxNumber];
+					int idx = curBox.overlapIndex;
+					while (idx >= 0 && idx < (int)g_Level.Overlaps.size())
+					{
+						const auto& ov = g_Level.Overlaps[idx];
+						int nb = ov.box;
+						if (nb != exitBox && nb != item->BoxNumber &&
+							nb >= 0 && nb < (int)g_Level.PathfindingBoxes.size() &&
+							zoneArr[nb] == curZone &&
+							!(g_Level.PathfindingBoxes[nb].flags & LOT->BlockMask) &&
+							!IsBoxInCooldown(LOT, nb))
+						{
+							hasAlternative = true;
+							break;
+						}
+						if (ov.flags & OVERLAP_END_BIT)
+							break;
+						idx++;
+					}
+
+					if (hasAlternative)
+						ForceBadBoxCooldown(LOT, exitBox);
+				}
+
+				ClearLOT(LOT); // Resets TargetBox + nodes; CalculateTarget refloods around the cooled box.
+				creature->StuckBox = item->BoxNumber;
+				creature->StuckTimer = 0;
+			}
+		}
+	}
+
 	// Fallback: if no target box, use creature's current box.
 	if (LOT->TargetBox == NO_VALUE)
-		TargetBox(LOT, item->BoxNumber);
+		TargetBox(LOT, item->BoxNumber, item);
 
 	// Calculate the actual world position to move toward.
 	CalculateTarget(&creature->Target, item, &creature->LOT);
@@ -3050,6 +3391,259 @@ TARGET_TYPE CalculateTarget(Vector3i* target, ItemInfo* item, LOTInfo* LOT)
 
 	auto* box = &g_Level.PathfindingBoxes[boxNumber];
 
+	// Creature + enemy, fetched once and reused below.
+	auto* creature = GetCreatureInfo(item);
+	auto* enemy = (creature != nullptr) ? creature->Enemy.Get() : nullptr;
+
+	// OG-faithful Y mode: breadcrumb skipped, TR4-style cruise (see ShouldUseOgWaterYMode).
+	bool ogYMode = ShouldUseOgWaterYMode(creature, item, LOT);
+
+	// LOS to enemy, shared by direct homing, the breadcrumb gate and the box-center override.
+	bool losToEnemy = false;
+
+	// Divers (Water zone, or Amphibious while submerged): get the breadcrumb's
+	// vertical-chain steering ("go to the portal XZ first, then change altitude").
+	bool swimNav = (LOT->Fly != NO_FLYING) &&
+		(LOT->Zone == ZoneType::Water || LOT->Zone == ZoneType::Amphibious);
+
+	// Broader in-water predicate for direct homing: also covers surface swimmers
+	// (big rat: Amphibious zone but Fly == NO_FLYING, cannot dive).
+	bool inWaterNav = (LOT->Zone == ZoneType::Water || LOT->Zone == ZoneType::Amphibious) &&
+		TestEnvironment(RoomEnvFlags::ENV_FLAG_WATER, item->RoomNumber);
+
+	if ((swimNav || inWaterNav) && enemy != nullptr)
+	{
+		auto origin = GameVector(item->Pose.Position, item->RoomNumber);
+		auto lookat = GameVector(enemy->Pose.Position, enemy->RoomNumber);
+		losToEnemy = LOS(&origin, &lookat);
+	}
+
+	// CLEAR-LOS DIRECT HOMING (OG): an attacking water creature that can see its
+	// in-water enemy swims straight at it -- the box chain only exists to steer
+	// around geometry it cannot see past. A land enemy is handled by the
+	// exit-connector breadcrumb instead.
+	if (inWaterNav && enemy != nullptr && losToEnemy && creature != nullptr &&
+		creature->Mood == MoodType::Attack &&
+		TestEnvironment(RoomEnvFlags::ENV_FLAG_WATER, enemy->RoomNumber))
+	{
+		target->x = enemy->Pose.Position.x;
+		target->y = enemy->Pose.Position.y;
+		target->z = enemy->Pose.Position.z;
+		return TARGET_TYPE::PRIME_TARGET;
+	}
+
+	// BREADCRUMB OVERRIDE for swimmers: corridor clipping cannot express "go to the
+	// portal XZ first, then change altitude", so on vertical chains (or blocked LOS)
+	// steer at the IMMEDIATE next box's centre with an explicit Y plan instead of
+	// homing at LOT->Target. Falls through to the regular loop inside the target box.
+	if (swimNav &&
+		LOT->TargetBox != NO_VALUE &&
+		boxNumber != LOT->TargetBox &&
+		!ogYMode)
+	{
+		// Run the breadcrumb regardless of LOS when the chain crosses a floor/ceiling
+		// portal: direct PRIME_TARGET would aim past the portal while the per-tick
+		// floor clamp blocks the descent (catch-22 at the portal lip).
+		bool chainHasVertical = ChainHasVerticalTransition(LOT, item->BoxNumber, CLICK(2));
+
+		// Amphibious swimmers chasing a DRY-land enemy must also use the breadcrumb:
+		// the water exit is a gentle ramp (flat chain), and direct homing beaches them
+		// a sector short of the real climb-out connector.
+		bool exitingWater = (LOT->Fly != NO_FLYING) && (enemy != nullptr) &&
+			!TestEnvironment(RoomEnvFlags::ENV_FLAG_WATER, enemy->RoomNumber);
+
+		// With clear LOS home straight at the enemy (OG); fall back to the breadcrumb
+		// when sight is blocked, the chain is vertical, or when exiting the water.
+		bool useBreadcrumb = (!losToEnemy || chainHasVertical) ||
+			(LOT->Zone == ZoneType::Amphibious && exitingWater);
+
+		if (useBreadcrumb)
+		{
+			int nextBox = LOT->Node[boxNumber].exitBox;
+
+			// EXIT-CONNECTOR re-route: when the next chain box is the dry land box
+			// itself (often an edge-touch "phantom" adjacency), steer instead through
+			// a neighbour at an intermediate floor that borders BOTH the water and the
+			// land box -- the real climb-out sector.
+			bool nextIsDryLand = nextBox != NO_VALUE &&
+				!(g_Level.PathfindingBoxes[nextBox].flags & (BOX_WATER | BOX_SHALLOW));
+			if (exitingWater && nextIsDryLand)
+			{
+				int landBox = nextBox;
+				int curH  = g_Level.PathfindingBoxes[boxNumber].height;
+				int landH = g_Level.PathfindingBoxes[landBox].height;
+				int idx = g_Level.PathfindingBoxes[boxNumber].overlapIndex;
+				while (idx >= 0 && idx < (int)g_Level.Overlaps.size())
+				{
+					const auto& ov = g_Level.Overlaps[idx];
+					int nb = ov.box;
+					bool swimmable = (g_Level.PathfindingBoxes[nb >= 0 ? nb : boxNumber].flags & (BOX_WATER | BOX_SHALLOW)) != 0;
+					bool reachable = nb >= 0 && nb != boxNumber && nb != landBox && swimmable &&
+						(ov.flags & OVERLAP_AMPHIBIOUS_TRAVERSABLE) &&
+						(LOT->Node[nb].searchNumber & SEARCH_NUMBER) == (LOT->SearchNumber & SEARCH_NUMBER) &&
+						!(g_Level.PathfindingBoxes[nb].flags & LOT->BlockMask);
+					if (reachable)
+					{
+						int nbH = g_Level.PathfindingBoxes[nb].height;
+						if (nbH > landH && nbH < curH) // transition floor: between land and water
+						{
+							// Connector must also border the land box (amphibious).
+							int j = g_Level.PathfindingBoxes[nb].overlapIndex;
+							while (j >= 0 && j < (int)g_Level.Overlaps.size())
+							{
+								const auto& ov2 = g_Level.Overlaps[j];
+								if (ov2.box == landBox && (ov2.flags & OVERLAP_AMPHIBIOUS_TRAVERSABLE))
+								{
+									nextBox = nb;
+									break;
+								}
+								if (ov2.flags & OVERLAP_END_BIT)
+									break;
+								j++;
+							}
+						}
+					}
+					if (nextBox != landBox) // connector found
+						break;
+					if (ov.flags & OVERLAP_END_BIT)
+						break;
+					idx++;
+				}
+			}
+
+			bool nextOk =
+				nextBox != NO_VALUE &&
+				nextBox != boxNumber &&
+				(LOT->Node[nextBox].searchNumber & SEARCH_NUMBER) == (LOT->SearchNumber & SEARCH_NUMBER) &&
+				!(g_Level.PathfindingBoxes[nextBox].flags & LOT->BlockMask);
+
+			if (nextOk)
+			{
+				constexpr int Y_TRANSITION_THRESHOLD = CLICK(2);
+				constexpr int Y_SCAN_MAX_HOPS        = 8;
+
+				auto nextCenter = GetBoxCenter(nextBox);
+
+				// RAMP-EXIT BIAS: a shallow shelf is only mountable from its downhill
+				// (open water) edge. Push the steering point past that edge so the
+				// creature surfaces there and wades up the slope, instead of jamming
+				// under the shore ceiling at a side edge.
+				if (exitingWater && (g_Level.PathfindingBoxes[nextBox].flags & BOX_SHALLOW))
+				{
+					int afterRamp = LOT->Node[nextBox].exitBox;
+					bool afterIsDryLand = afterRamp != NO_VALUE && afterRamp != nextBox &&
+						!(g_Level.PathfindingBoxes[afterRamp].flags & (BOX_WATER | BOX_SHALLOW));
+					if (afterIsDryLand)
+					{
+						auto landCenter = GetBoxCenter(afterRamp);
+						float dirX = nextCenter.x - landCenter.x; // downhill = away from land
+						float dirZ = nextCenter.z - landCenter.z;
+						float len = Vector2(dirX, dirZ).Length();
+						if (len > 1.0f)
+						{
+							float k = (float)BLOCK(0.75f) / len;
+							nextCenter.x += dirX * k;
+							nextCenter.z += dirZ * k;
+						}
+					}
+				}
+
+				// Default breadcrumb Y = cruise altitude over the next box.
+				const int nextHeight = g_Level.PathfindingBoxes[nextBox].height;
+				const int currHeight = g_Level.PathfindingBoxes[boxNumber].height;
+				float targetY = (float)(nextHeight - BLOCK(1));
+
+				// DEEPEST-BOX DESCENT: on a chain diving through a floor portal, commit
+				// to the deepest chain box's altitude -- otherwise the next hop's upper
+				// cruise yanks the creature back up before it clears the portal.
+				int deepestHeight = currHeight;
+				int shallowestHeight = currHeight;
+				bool foundDeeper = false;
+				bool foundShallower = false;
+				int yScanBox = nextBox;
+				for (int s = 0; s < Y_SCAN_MAX_HOPS; s++)
+				{
+					int scanHeight = g_Level.PathfindingBoxes[yScanBox].height;
+					if (scanHeight > deepestHeight + Y_TRANSITION_THRESHOLD)
+					{
+						deepestHeight = scanHeight;
+						foundDeeper = true;
+					}
+					if (scanHeight < shallowestHeight - Y_TRANSITION_THRESHOLD)
+					{
+						shallowestHeight = scanHeight;
+						foundShallower = true;
+					}
+
+					if (yScanBox == LOT->TargetBox)
+						break;
+
+					int nn = LOT->Node[yScanBox].exitBox;
+					if (nn == NO_VALUE || nn == yScanBox)
+						break;
+					if ((LOT->Node[nn].searchNumber & SEARCH_NUMBER) != (LOT->SearchNumber & SEARCH_NUMBER))
+						break;
+					if (g_Level.PathfindingBoxes[nn].flags & LOT->BlockMask)
+						break;
+
+					yScanBox = nn;
+				}
+
+				if (foundDeeper)
+				{
+					// CORRIDOR-CENTER DIVE: aim at the midpoint between the next box
+					// floor and its OWN ceiling plane (no portal traversal!) so the
+					// diver swims down the corridor centre instead of skimming the
+					// floor. Falls back to the deep commit when there is no ceiling.
+					auto nc = GetBoxCenter(nextBox);
+					int probeY = nextHeight - CLICK(1);
+					short rnDive = (short)FindRoomNumber(Vector3i((int)nc.x, probeY, (int)nc.z), item->RoomNumber);
+					int nextSectorCeiling = GetPointCollision(Vector3i((int)nc.x, probeY, (int)nc.z), rnDive)
+						.GetSector().GetSurfaceHeight((int)nc.x, (int)nc.z, false);
+					if (nextSectorCeiling != NO_HEIGHT)
+						targetY = (float)((nextHeight + nextSectorCeiling) / 2);
+					else
+						targetY = (float)(deepestHeight - CLICK(1));
+				}
+				else
+				{
+					// STICKY DESCENT: if last tick's target.y is still far below,
+					// hold it until pos.y catches up -- an ascent ahead must not
+					// yank the creature back before it clears the portal.
+					bool stickyHeld = false;
+					if (creature != nullptr)
+					{
+						int prevTargetY = creature->Target.y;
+						if (prevTargetY > (int)item->Pose.Position.y + BLOCK(1))
+						{
+							targetY = (float)prevTargetY;
+							stickyHeld = true;
+						}
+					}
+
+					// SHAFT Y-TRACKING: stacked water rooms share one deep floor, so
+					// box heights cannot signal up/down. When the immediate step is
+					// not a descent and the enemy's column overlaps the creature's
+					// (BoxesXZOverlap), aim Y at the enemy itself -- the only reliable
+					// vertical cue, immune to exitBox flicker. Deep-corridor routes
+					// (no XZ overlap) keep the default deep cruise and dive first.
+					if (!stickyHeld && foundShallower &&
+						enemy != nullptr && creature->Mood != MoodType::Bored &&
+						nextHeight <= currHeight &&
+						BoxesXZOverlap(boxNumber, LOT->TargetBox))
+					{
+						targetY = (float)enemy->Pose.Position.y;
+					}
+				}
+
+				target->x = (int)nextCenter.x;
+				target->y = (int)targetY;
+				target->z = (int)nextCenter.z;
+				return TARGET_TYPE::PRIME_TARGET;
+			}
+		}
+	}
+
 	// Convert box boundaries to world coordinates.
 	// Note: box coordinates are in blocks, multiply by BLOCK(1) for world units.
 	int boxLeft = ((int)box->left * BLOCK(1));
@@ -3076,12 +3670,16 @@ TARGET_TYPE CalculateTarget(Vector3i* target, ItemInfo* item, LOTInfo* LOT)
 
 		box = &g_Level.PathfindingBoxes[boxNumber];
 
-		// Clamp target Y to box height.
-		// Flying creatures stay above the floor.
+		// Clamp target Y to box height. Water/amphibious swimmers skip the flyer
+		// clamp -- their altitude is decided by the breadcrumb / reached-target step,
+		// and clamping here would drag it back toward the floor every iteration.
 		if (LOT->Fly != NO_FLYING)
 		{
-			if (target->y > box->height - BLOCK(1))
-				target->y = box->height - BLOCK(1);
+			if (LOT->Zone != ZoneType::Water && LOT->Zone != ZoneType::Amphibious)
+			{
+				if (target->y > box->height - BLOCK(1))
+					target->y = box->height - BLOCK(1);
+			}
 		}
 		else if (target->y > box->height)
 		{
@@ -3239,6 +3837,37 @@ TARGET_TYPE CalculateTarget(Vector3i* target, ItemInfo* item, LOTInfo* LOT)
 		// REACHED TARGET BOX: Calculate final target position.
 		if (boxNumber == LOT->TargetBox)
 		{
+			// WATER + ATTACK + ENEMY-ON-LAND: LOT->Target lies above the surface in
+			// a dry room; chasing its XZ jams the creature at the ceiling portal
+			// (surface clamp reverts, next tick re-targets -- endless bobbing).
+			// Aim at the centre of the last reachable water box instead.
+			bool enemyOnLand = false;
+			if (enemy != nullptr)
+			{
+				enemyOnLand = enemy->IsLara()
+					? (GetLaraInfo(*enemy).Control.WaterStatus == WaterStatus::Dry)
+					: !TestEnvironment(RoomEnvFlags::ENV_FLAG_WATER, enemy->RoomNumber);
+			}
+
+			bool useBoxCenter =
+				LOT->Fly != NO_FLYING &&
+				LOT->Zone == ZoneType::Water &&
+				creature != nullptr &&
+				creature->Mood == MoodType::Attack &&
+				losToEnemy &&
+				enemyOnLand;
+
+			if (useBoxCenter)
+			{
+				auto center = GetBoxCenter(boxNumber);
+				target->x = (int)center.x;
+				target->z = (int)center.z;
+				// Keep cruise altitude (LOT->Target.y) instead of the near-floor box centre Y.
+				if (!ogYMode)
+					target->y = LOT->Target.y;
+				return TARGET_TYPE::PRIME_TARGET;
+			}
+
 			// Use LOT target Z if path was moving left/right.
 			if (direction & (CLIP_LEFT | CLIP_RIGHT))
 			{

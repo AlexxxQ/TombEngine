@@ -137,7 +137,7 @@ bool BadFloor(int x, int y, int z, int boxHeight, int nextHeight, short roomNumb
 int CreatureCreature(short itemNumber);
 bool ValidBox(ItemInfo* item, short zoneNumber, short boxNumber);
 bool EscapeBox(ItemInfo* item, ItemInfo* enemy, int boxNumber);
-void TargetBox(LOTInfo* LOT, int boxNumber);
+void TargetBox(LOTInfo* LOT, int boxNumber, ItemInfo* item = nullptr);
 bool UpdateLOT(LOTInfo* LOT, int expansion);
 bool SearchLOT(LOTInfo* LOT, int expansion);
 bool SearchLOT_BFS(LOTInfo* LOT, int depth);

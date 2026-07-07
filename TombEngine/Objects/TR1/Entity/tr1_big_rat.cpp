@@ -35,6 +35,7 @@ namespace TEN::Entities::Creatures::TR1
 
 	constexpr auto BIG_RAT_RUN_TURN_RATE_MAX  = ANGLE(9.0f); // (6.0f) in OG, revert after spasm effect with velocity is implemented.
 	constexpr auto BIG_RAT_SWIM_TURN_RATE_MAX = ANGLE(4.0f); // (3.0f) in OG, revert after spasm effect with velocity is implemented.
+	constexpr auto BIG_RAT_SWIM_UNSTUCK_TURN_RATE = ANGLE(9.0f);
 
 	const auto BigRatBite = CreatureBiteInfo(Vector3(0, -11, 108), 3);
 	const auto BigRatAttackJoints = std::vector<unsigned int>{ 0, 1, 2, 3, 7, 8, 24, 25 };
@@ -112,6 +113,10 @@ namespace TEN::Entities::Creatures::TR1
 
 		short angle = 0;
 		short head = 0;
+
+		// Position before this tick's animation/movement. Used by the surface-swim
+		// unstuck below to detect "paddling in place" against an obstacle.
+		auto prevPos = item->Pose.Position;
 
 		SetBigRatWater(item);
 		bool isOnWater = IsBigRatOnWater(item);
@@ -238,29 +243,43 @@ namespace TEN::Entities::Creatures::TR1
 		}
 
 		CreatureJoint(item, 0, head);
-		CreatureAnimation(itemNumber, angle, 0);
+		if (!isOnWater && item->HitPoints > 0)
+			CreatureVault(itemNumber, angle, 2, 0); // Interpolate descent steps in dry rooms.
+		else
+			CreatureAnimation(itemNumber, angle, 0); // Dead or in water: plain animation, no vault/pathfinding.
 
-		if (isOnWater)
+		// Avoid getting stuck at platforms on the water surface. A surface swimmer
+		// paddling in place against an obstacle (XZ unchanged since last tick) gets a
+		// random turn applied for a short burst so it slides off and resumes its route.
+		if (item->Animation.ActiveState == BIG_RAT_STATE_SWIM)
+		{
+			if (item->ItemFlags[0] > 0)
+			{
+				item->Pose.Orientation.y += (short)(item->ItemFlags[1] * BIG_RAT_SWIM_UNSTUCK_TURN_RATE);
+				item->ItemFlags[0]--;
+			}
+			else if (item->Pose.Position.x == prevPos.x && item->Pose.Position.z == prevPos.z)
+			{
+				item->ItemFlags[0] = 20; // Frames to apply turn.
+				item->ItemFlags[1] = Random::TestProbability(1 / 2.0f) ? 1 : -1; // Random turn direction.
+			}
+		}
+
+		if ((item->Animation.ActiveState == BIG_RAT_STATE_SWIM ||
+			item->Animation.ActiveState == BIG_RAT_STATE_SWIM_BITE_ATTACK) &&
+			IsBigRatOnWater(item))
 		{
 			CreatureUnderwater(item, 0);
 			item->Pose.Position.y = GetPointCollision(*item).GetWaterTopHeight() - BIG_RAT_WATER_SURFACE_OFFSET;
 
-			if (item->Animation.ActiveState == BIG_RAT_STATE_SWIM ||
-				item->Animation.ActiveState == BIG_RAT_STATE_SWIM_BITE_ATTACK)
+			if (!(Wibble & 30))
 			{
-				if (!(Wibble & 30))
-				{
-					SpawnRipple(
-						item->Pose.Position.ToVector3(),
-						item->RoomNumber,
-						BIG_RAT_RIPPLE_RADIUS,
-						(int)RippleFlags::SlowFade | (int)RippleFlags::LowOpacity);
-				}
+				SpawnRipple(
+					item->Pose.Position.ToVector3(),
+					item->RoomNumber,
+					BIG_RAT_RIPPLE_RADIUS,
+					(int)RippleFlags::SlowFade | (int)RippleFlags::LowOpacity);
 			}
-		}
-		else
-		{
-			item->Pose.Position.y = item->Floor;
 		}
 	}
 }

@@ -66,7 +66,12 @@ namespace TEN::Entities::Creatures::TR2
 				break;
 
 			case 1:
-				creature->MaxTurn = ANGLE(0.5f);
+				// SWIM_1: bump turn rate while hunting (Attack mood) so the
+				// shark tracks Lara more aggressively. Other moods keep the
+				// original TR2 slow-swim rate.
+				creature->MaxTurn = (creature->Mood == MoodType::Attack)
+					? ANGLE(2.0f)
+					: ANGLE(0.5f);
 
 				if (creature->Mood == MoodType::Bored)
 					break;
@@ -78,7 +83,11 @@ namespace TEN::Entities::Creatures::TR2
 				break;
 
 			case 2:
-				creature->MaxTurn = ANGLE(2.0f);
+				// SWIM_2: bump turn rate while hunting (Attack mood) so the
+				// fast-swim lunge can curve toward Lara instead of overshooting.
+				creature->MaxTurn = (creature->Mood == MoodType::Attack)
+					? ANGLE(4.0f)
+					: ANGLE(2.0f);
 				creature->Flags = 0;
 
 				if (creature->Mood == MoodType::Bored)
@@ -96,7 +105,30 @@ namespace TEN::Entities::Creatures::TR2
 				break;
 
 			case 3:
+				// ATTACK_1 (close-range bite): allow slight tracking so the
+				// shark doesn't miss when Lara dodges slightly. TR2 original
+				// inherited MaxTurn=0 from STOP state, producing visible
+				// fly-by behaviour.
+				creature->MaxTurn = ANGLE(6.0f);
+
+				if (AI.ahead)
+					head = AI.angle;
+
+				if (!creature->Flags && item->TouchBits.Test(SharkBiteAttackJoints))
+				{
+					DoDamage(creature->Enemy, SHARK_BITE_ATTACK_DAMAGE);
+					CreatureEffect(item, SharkBite, DoBloodSplat);
+					creature->Flags = 1;
+				}
+
+				break;
+
 			case 4:
+				// ATTACK_2 (fast-swim bite): allow more tracking than the
+				// SWIM_2 inherited turn (2°) so a high-velocity lunge can
+				// still adjust toward Lara mid-attack.
+				creature->MaxTurn = ANGLE(6.0f);
+
 				if (AI.ahead)
 					head = AI.angle;
 

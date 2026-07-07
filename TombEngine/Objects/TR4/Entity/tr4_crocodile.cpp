@@ -91,27 +91,33 @@ namespace TEN::Entities::TR4
 
 	static bool IsCrocodileInWater(ItemInfo* item)
 	{
-		auto* creature = GetCreatureInfo(item);
 		auto bounds = GameBoundingBox(item);
 
 		auto pointColl = GetPointCollision(*item);
 
+		// NOTE: GetWaterBottomHeight() returns the water DEPTH (not an absolute Y);
+		// use it directly. Subtracting GetWaterTopHeight() went negative for a finite
+		// pool under an air room, making the croc treat it as dry land.
 		int waterSurface = pointColl.GetWaterTopHeight();
-		int waterBottom = pointColl.GetWaterBottomHeight();
-		int depth = waterBottom - waterSurface;
+		int waterDepth = pointColl.GetWaterBottomHeight();
 
-		return (depth > CLICK(0.75f) && (waterSurface != NO_HEIGHT) && waterSurface <= (item->Pose.Position.y + bounds.Y2));
+		return (waterDepth > CLICK(0.75f) && (waterSurface != NO_HEIGHT) && waterSurface <= (item->Pose.Position.y + bounds.Y2));
 	}
 
 	static void SetCrocodileWater(ItemInfo* item)
 	{
 		auto* creature = GetCreatureInfo(item);
 
-		if (IsCrocodileInWater(item))
+		// OG keys the swim step/drop off the water-ROOM flag, not a depth probe: a
+		// depth gate keeps the land step on shallow shore connectors, so the height
+		// gate could never route the descent into deep water (chicken-and-egg).
+		// Fly stays depth-gated -- swim movement/animation must not engage on the
+		// dry shore margin.
+		if (TestEnvironment(ENV_FLAG_WATER, item))
 		{
 			creature->LOT.Step = BLOCK(20);
 			creature->LOT.Drop = -BLOCK(20);
-			creature->LOT.Fly = CROC_SWIM_SPEED;
+			creature->LOT.Fly = IsCrocodileInWater(item) ? CROC_SWIM_SPEED : NO_FLYING;
 		}
 		else
 		{
@@ -214,6 +220,13 @@ namespace TEN::Entities::TR4
 
 					item->ItemFlags[0] = std::clamp<short>(item->ItemFlags[0], -1024, 1024);
 				}
+				// Land-to-water: route through walk to the swim cycle (idle has no
+				// direct swim animation). Without this a croc in close combat never dives.
+				else if (IsCrocodileInWater(item))
+				{
+					item->Animation.RequiredState = CROC_STATE_SWIM_FORWARD;
+					item->Animation.TargetState = CROC_STATE_WALK_FORWARD;
+				}
 				else if (ai.bite && ai.distance < CROC_ATTACK_RANGE)
 					item->Animation.TargetState = CROC_STATE_BITE_ATTACK;
 				else if(ai.ahead && ai.distance < CROC_STATE_RUN_RANGE)
@@ -226,8 +239,9 @@ namespace TEN::Entities::TR4
 			case CROC_STATE_WALK_FORWARD:
 				creature->MaxTurn = CROC_STATE_WALK_TURN_RATE_MAX;
 
-				// Land to water transition.
-				if (IsCrocodileInWater(item) && !item->Animation.RequiredState)
+				// Land to water. "No required state" is NO_VALUE (-1), which is
+				// truthy -- the old !RequiredState test broke the swim hand-off.
+				if (IsCrocodileInWater(item) && item->Animation.RequiredState == NO_VALUE)
 				{
 					item->Animation.TargetState = CROC_STATE_SWIM_FORWARD;
 					break;

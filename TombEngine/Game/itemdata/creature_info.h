@@ -174,4 +174,16 @@ struct CreatureInfo
 	short Tosspad	  = 0;
 	short LocationAI  = 0;
 	short Flags		  = 0;
+
+	// TIME-BASED STUCK DETECTION (transient, not serialized). Time spent in the same
+	// pathfinding box while a target box is pending; recovers swimmers from phantom
+	// overlaps that the per-frame BadBox penalty cannot catch (XZ swim oscillation).
+	int StuckBox	= NO_VALUE; // Box the creature has been sitting in.
+	int StuckTimer	= 0;        // Frames spent in StuckBox without reaching the target.
+
+	// OFF-MAP RESCUE (transient, not serialized): last position/box on a valid
+	// pathfinding box; the creature is teleported back if it drifts into the void.
+	int		 LastValidBox = NO_VALUE;
+	Vector3i LastValidPos = Vector3i::Zero;
+	short	 LastValidRoom = NO_VALUE;
 };
