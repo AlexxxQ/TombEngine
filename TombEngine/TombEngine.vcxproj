@@ -449,6 +449,7 @@ if not exist "%ScriptsDir%\Strings.lua" xcopy /Y "$(SolutionDir)Scripts\Strings.
     <ClInclude Include="Game\control\flipeffect.h" />
     <ClInclude Include="Game\control\los.h" />
     <ClInclude Include="Game\control\lot.h" />
+    <ClInclude Include="Game\control\water_nav.h" />
     <ClInclude Include="Game\control\trigger.h" />
     <ClInclude Include="Game\control\volume.h" />
     <ClInclude Include="Game\control\event.h" />
@@ -1056,6 +1057,7 @@ if not exist "%ScriptsDir%\Strings.lua" xcopy /Y "$(SolutionDir)Scripts\Strings.
     <ClCompile Include="Game\control\flipeffect.cpp" />
     <ClCompile Include="Game\control\los.cpp" />
     <ClCompile Include="Game\control\lot.cpp" />
+    <ClCompile Include="Game\control\water_nav.cpp" />
     <ClCompile Include="Game\control\trigger.cpp" />
     <ClCompile Include="Game\control\volume.cpp" />
     <ClCompile Include="Game\Debug\Debug.cpp" />

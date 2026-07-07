@@ -153,6 +153,12 @@ bool CreatureAnimation(short itemNumber, short headingAngle, short tiltAngle);
 void CreatureHealth(ItemInfo* item);
 void AdjustStopperFlag(ItemInfo* item, int direction);
 void InitializeItemBoxData();
+Vector3 GetBoxCenter(int boxIndex);
+
+// Bad-box penalty mechanism (state lives in LOT->BadBoxes). ForceBadBoxCooldown drops a
+// box straight into cooldown; IsBoxInCooldown queries it. Exposed for the swimmer unstuck.
+bool IsBoxInCooldown(const LOTInfo* LOT, int boxNumber);
+void ForceBadBoxCooldown(LOTInfo* LOT, int boxNumber);
 
 bool CanCreatureJump(ItemInfo& item, JumpDistance jumpDistType);
 

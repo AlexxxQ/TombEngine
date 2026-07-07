@@ -5,6 +5,7 @@
 #include "Game/collision/Point.h"
 #include "Game/control/box.h"
 #include "Game/control/control.h"
+#include "Game/control/water_nav.h"
 #include "Game/effects/effects.h"
 #include "Game/effects/Ripple.h"
 #include "Game/items.h"
@@ -89,18 +90,8 @@ namespace TEN::Entities::Creatures::TR1
 
 	static void SetBigRatWater(ItemInfo* item)
 	{
-		auto& creature = *GetCreatureInfo(item);
-
-		if (IsBigRatOnWater(item))
-		{
-			creature.LOT.Step = BLOCK(20);
-			creature.LOT.Drop = -BLOCK(20);
-		}
-		else
-		{
-			creature.LOT.Step = CLICK(1.0f);
-			creature.LOT.Drop = -CLICK(1.5f);
-		}
+		// Surface swimmer: Fly stays NO_FLYING in both states (cannot dive).
+		SetAmphibiousLOT(*GetCreatureInfo(item), IsBigRatOnWater(item), NO_FLYING, CLICK(1.0f), -CLICK(1.5f));
 	}
 
 	void BigRatControl(short itemNumber)

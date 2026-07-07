@@ -6,6 +6,7 @@
 #include "Game/collision/Point.h"
 #include "Game/control/box.h"
 #include "Game/control/control.h"
+#include "Game/control/water_nav.h"
 #include "Game/effects/effects.h"
 #include "Game/itemdata/creature_info.h"
 #include "Game/items.h"
@@ -112,19 +113,12 @@ namespace TEN::Entities::TR4
 		// depth gate keeps the land step on shallow shore connectors, so the height
 		// gate could never route the descent into deep water (chicken-and-egg).
 		// Fly stays depth-gated -- swim movement/animation must not engage on the
-		// dry shore margin.
-		if (TestEnvironment(ENV_FLAG_WATER, item))
-		{
-			creature->LOT.Step = BLOCK(20);
-			creature->LOT.Drop = -BLOCK(20);
-			creature->LOT.Fly = IsCrocodileInWater(item) ? CROC_SWIM_SPEED : NO_FLYING;
-		}
-		else
-		{
-			creature->LOT.Step = CLICK(1);
-			creature->LOT.Drop = -CLICK(2); // Unlike TR4, allow croc to descend 2-click ramps.
-			creature->LOT.Fly = NO_FLYING;
-		}
+		// dry shore margin. Land drop is -CLICK(2): unlike TR4, allow 2-click ramps.
+		SetAmphibiousLOT(
+			*creature,
+			TestEnvironment(ENV_FLAG_WATER, item),
+			IsCrocodileInWater(item) ? CROC_SWIM_SPEED : NO_FLYING,
+			CLICK(1), -CLICK(2));
 	}
 
 	void CrocodileControl(short itemNumber)
