@@ -56,3 +56,22 @@ void SetAmphibiousLOT(CreatureInfo& creature, bool grantSwimStepDrop, int flyRat
 // target box is pending, cool the exitBox (likely a phantom overlap) and reflood around it.
 // The per-frame BadBox penalty never accumulates underwater (XZ swim oscillation).
 void TryUnstuckSwimmer(ItemInfo* item, CreatureInfo* creature, LOTInfo* LOT);
+
+// Guard for the BadBox penalty: true if the box lies on a 3D-mover's active route
+// (required box, current box, next box on the chain). Swimmers bump ceilings/surfaces
+// in tight portal boxes; penalizing the transit box makes BFS detour "through walls".
+// Genuine stalls are recovered by TryUnstuckSwimmer instead.
+bool IsBoxOnSwimmerRoute(const LOTInfo* LOT, int boxNumber);
+
+// Asymmetric descent clamp for swimmers (Water + Amphibious): never dive below the
+// floor under the current XZ (minus 1 click). Prevents crashing into a shallow local
+// floor while chasing a deep target past a floor portal -- the dive unblocks once
+// horizontal motion carries the creature over the deep sector. No-op in OG Y mode
+// (flat bored cruise sets a safe altitude itself). Returns the clamped fly rate.
+int ClampSwimDescent(const ItemInfo* item, const CreatureInfo* creature, const LOTInfo* LOT, int flyRate, int floorHeight);
+
+// Water + Attack + enemy-on-land target override: LOT->Target lies above the surface
+// in a dry room; chasing its XZ jams the creature at the ceiling portal (surface clamp
+// reverts, next tick re-targets -- endless bobbing). Aims at the centre of the last
+// reachable water box instead. Returns true with *target set (treat as PRIME_TARGET).
+bool TryGetWaterBoxCenterTarget(Vector3i* target, const CreatureInfo* creature, const ItemInfo* enemy, const LOTInfo* LOT, int boxNumber, bool ogYMode, bool losToEnemy);

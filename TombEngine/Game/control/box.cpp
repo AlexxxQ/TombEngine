@@ -558,23 +558,9 @@ static void AddBadBox(LOTInfo* LOT, int boxNumber)
 	if (boxNumber == NO_VALUE)
 		return;
 
-	// SWIMMER GUARD: never blacklist a box on the swimmer's active route (enemy box,
-	// current box, next box on the chain). Swimmers bump ceilings/surfaces in tight
-	// portal boxes; penalizing the transit box makes BFS detour "through walls".
-	// Genuine stalls are recovered by the time-based StuckTimer unstuck instead.
-	if (LOT->Fly != NO_FLYING)
-	{
-		if (LOT->RequiredBox != NO_VALUE && boxNumber == LOT->RequiredBox)
-			return;
-
-		if (LOT->SourceBox != NO_VALUE)
-		{
-			if (boxNumber == LOT->SourceBox)
-				return;
-			if (boxNumber == LOT->Node[LOT->SourceBox].exitBox)
-				return;
-		}
-	}
+	// Never blacklist a box on a swimmer's active route (see water_nav.cpp).
+	if (IsBoxOnSwimmerRoute(LOT, boxNumber))
+		return;
 
 	// Don't add bad boxes if penalty system is disabled.
 	if (g_GameFlow->GetSettings()->Pathfinding.CollisionPenaltyThreshold <= EPSILON)
@@ -1002,22 +988,8 @@ bool CreaturePathfind(ItemInfo* item, Vector3i prevPos, short angle, short tilt)
 
 		height = GetFloorHeight(floor, item->Pose.Position.x, y, item->Pose.Position.z);
 
-		// Asymmetric descent clamp for swimmers (Water + Amphibious): never dive below
-		// the floor under the current XZ (minus 1 click). Prevents crashing into a
-		// shallow local floor while chasing a deep target past a floor portal -- the
-		// dive unblocks once horizontal motion carries the creature over the deep
-		// sector. Skipped in OG Y mode (flat bored cruise sets a safe altitude itself).
-		bool ogYMode = ShouldUseOgWaterYMode(creature, item, LOT);
-
-		if (IsWaterZone(LOT) && flyRate > 0 && !ogYMode)
-		{
-			int swimCeilingY = height - CLICK(1);
-			int allowedDelta = swimCeilingY - item->Pose.Position.y;
-			if (allowedDelta < 0)
-				allowedDelta = 0;
-			if (flyRate > allowedDelta)
-				flyRate = allowedDelta;
-		}
+		// Asymmetric descent clamp for swimmers (see water_nav.cpp).
+		flyRate = ClampSwimDescent(item, creature, LOT, flyRate, height);
 
 		if (item->Pose.Position.y + flyRate <= height)
 		{
@@ -3421,28 +3393,10 @@ TARGET_TYPE CalculateTarget(Vector3i* target, ItemInfo* item, LOTInfo* LOT)
 		// REACHED TARGET BOX: Calculate final target position.
 		if (boxNumber == LOT->TargetBox)
 		{
-			// WATER + ATTACK + ENEMY-ON-LAND: LOT->Target lies above the surface in
-			// a dry room; chasing its XZ jams the creature at the ceiling portal
-			// (surface clamp reverts, next tick re-targets -- endless bobbing).
-			// Aim at the centre of the last reachable water box instead.
-			bool useBoxCenter =
-				LOT->Fly != NO_FLYING &&
-				LOT->Zone == ZoneType::Water &&
-				creature != nullptr &&
-				creature->Mood == MoodType::Attack &&
-				losToEnemy &&
-				IsEnemyOnLand(enemy);
-
-			if (useBoxCenter)
-			{
-				auto center = GetBoxCenter(boxNumber);
-				target->x = (int)center.x;
-				target->z = (int)center.z;
-				// Keep cruise altitude (LOT->Target.y) instead of the near-floor box centre Y.
-				if (!ogYMode)
-					target->y = LOT->Target.y;
+			// Water + attack + enemy-on-land: aim at the centre of the last reachable
+			// water box instead of the dry-room target XZ (see water_nav.cpp).
+			if (TryGetWaterBoxCenterTarget(target, creature, enemy, LOT, boxNumber, ogYMode, losToEnemy))
 				return TARGET_TYPE::PRIME_TARGET;
-			}
 
 			// Use LOT target Z if path was moving left/right.
 			if (direction & (CLIP_LEFT | CLIP_RIGHT))

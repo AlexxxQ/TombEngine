@@ -475,3 +475,62 @@ void TryUnstuckSwimmer(ItemInfo* item, CreatureInfo* creature, LOTInfo* LOT)
 	creature->StuckBox = item->BoxNumber;
 	creature->StuckTimer = 0;
 }
+
+bool IsBoxOnSwimmerRoute(const LOTInfo* LOT, int boxNumber)
+{
+	if (LOT->Fly == NO_FLYING || boxNumber == NO_VALUE)
+		return false;
+
+	if (LOT->RequiredBox != NO_VALUE && boxNumber == LOT->RequiredBox)
+		return true;
+
+	if (LOT->SourceBox != NO_VALUE)
+	{
+		if (boxNumber == LOT->SourceBox)
+			return true;
+
+		if (boxNumber == LOT->Node[LOT->SourceBox].exitBox)
+			return true;
+	}
+
+	return false;
+}
+
+int ClampSwimDescent(const ItemInfo* item, const CreatureInfo* creature, const LOTInfo* LOT, int flyRate, int floorHeight)
+{
+	if (!IsWaterZone(LOT) || flyRate <= 0)
+		return flyRate;
+
+	// OG Y mode: flat bored cruise sets a safe altitude itself, no clamp.
+	if (ShouldUseOgWaterYMode(creature, item, LOT))
+		return flyRate;
+
+	int swimCeilingY = floorHeight - CLICK(1);
+	int allowedDelta = swimCeilingY - item->Pose.Position.y;
+	if (allowedDelta < 0)
+		allowedDelta = 0;
+
+	return std::min(flyRate, allowedDelta);
+}
+
+bool TryGetWaterBoxCenterTarget(Vector3i* target, const CreatureInfo* creature, const ItemInfo* enemy, const LOTInfo* LOT, int boxNumber, bool ogYMode, bool losToEnemy)
+{
+	if (LOT->Fly == NO_FLYING || LOT->Zone != ZoneType::Water)
+		return false;
+
+	if (creature == nullptr || creature->Mood != MoodType::Attack)
+		return false;
+
+	if (!losToEnemy || !IsEnemyOnLand(enemy))
+		return false;
+
+	auto center = GetBoxCenter(boxNumber);
+	target->x = (int)center.x;
+	target->z = (int)center.z;
+
+	// Keep cruise altitude (LOT->Target.y) instead of the near-floor box centre Y.
+	if (!ogYMode)
+		target->y = LOT->Target.y;
+
+	return true;
+}
