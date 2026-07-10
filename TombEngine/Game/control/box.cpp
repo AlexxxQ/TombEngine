@@ -71,7 +71,7 @@ using PathQueue = std::priority_queue<QueueElement, std::vector<QueueElement>, s
 // Runtime per-combination zone re-flood helpers (defined further down, used earlier).
 static bool IsBoxActiveNow(int box);
 static bool IsBoxUsableNow(int box, bool liveEdge);
-static bool OverlapActiveFromBox(int box, int overlapFlags);
+static bool OverlapActiveForEdge(int fromBox, int overlapFlags);
 static int ResolveRuntimeBox(int box);
 static bool TryGetCompiledOverlapFlags(int fromBox, int toBox, int& flags);
 static bool TryGetRouteEdgeFlags(int fromBox, int toBox, int& flags);
@@ -218,7 +218,7 @@ void DrawLaraPathfinding(int boxIndex)
 		auto overlap = g_Level.Overlaps[index];
 
 		int overlapBox = ResolveRuntimeBox(overlap.box);
-		if (IsBoxUsableNow(overlapBox, false) && OverlapActiveFromBox(boxIndex, overlap.flags))
+		if (IsBoxUsableNow(overlapBox, false) && OverlapActiveForEdge(boxIndex, overlap.flags))
 			DrawBox(overlapBox, Vector3(1, 1, 0));
 
 		if (overlap.flags & OVERLAP_END_BIT)
@@ -739,7 +739,7 @@ static bool CanBypassRouteExitBlocker(int x, int z, int boxHeight, int nextHeigh
 	int routeFlags = 0;
 	bool routeExitFloorHint =
 		TryGetRouteEdgeFlags(routeFrom, nextBox, routeFlags) &&
-		OverlapActiveFromBox(routeFrom, routeFlags) &&
+		OverlapActiveForEdge(routeFrom, routeFlags) &&
 		(routeFlags & OVERLAP_ROUTE_EXIT_FLOOR_HINT) != 0;
 
 	if (!routeExitFloorHint || !PointInsideBoxXZ(x, z, nextBox))
@@ -778,7 +778,7 @@ static bool TryResolveRouteExitFloorAtVerticalPortal(ItemInfo* item, LOTInfo* LO
 	int routeFlags = 0;
 	bool routeExitFloorHint =
 		TryGetRouteEdgeFlags(currentBox, exitBox, routeFlags) &&
-		OverlapActiveFromBox(currentBox, routeFlags) &&
+		OverlapActiveForEdge(currentBox, routeFlags) &&
 		(routeFlags & OVERLAP_ROUTE_EXIT_FLOOR_HINT) != 0;
 
 	if (!routeExitFloorHint)
@@ -2146,20 +2146,28 @@ static bool IsBoxUsableNow(int box, bool liveEdge)
 		s_liveEdgeBoxes[box] != 0;
 }
 
-// Is an overlap leaving 'box' physically present right now? An overlap carries the geometry
-// of the compiler pass that found it (unflipped / flipped). It is real now only if it matches
-// the box's ROOM's CURRENT flip state -- even for a "merged" box (same floor in both states),
-// because its ADJACENCIES still change when its room flips (alt geometry can extend over a
-// neighbouring base room). This is directional: a base box B can be entered going UP onto a
-// merged box M (B unflipped -> U valid), while M, once its room is flipped, leaves via its
-// ALT neighbours (F), not back down to B -- exactly the one-way seam the logs showed.
-static bool OverlapActiveFromBox(int box, int overlapFlags)
+// Cross-group entries carry their exact compiler room groups and state mask. Legacy entries
+// fall back to the source box's unflipped/flipped validity bits.
+static bool OverlapActiveForEdge(int fromBox, int overlapFlags)
 {
+	if (overlapFlags & OVERLAP_PAIR_STATE_VALIDITY)
+	{
+		int fromGroup = (overlapFlags & OVERLAP_PAIR_SOURCE_GROUP_VALIDITY) ?
+			((overlapFlags & OVERLAP_PAIR_SOURCE_GROUP_MASK) >> OVERLAP_PAIR_SOURCE_GROUP_SHIFT) : NO_VALUE;
+		int toGroup = (overlapFlags & OVERLAP_PAIR_TARGET_GROUP_VALIDITY) ?
+			(int)(((unsigned int)overlapFlags & OVERLAP_PAIR_TARGET_GROUP_MASK) >> OVERLAP_PAIR_TARGET_GROUP_SHIFT) : NO_VALUE;
+
+		bool fromFlipped = fromGroup != NO_VALUE && fromGroup < MAX_FLIPMAP && FlipStats[fromGroup];
+		bool toFlipped = toGroup != NO_VALUE && toGroup < MAX_FLIPMAP && FlipStats[toGroup];
+		int state = (fromFlipped ? 2 : 0) | (toFlipped ? 1 : 0);
+		int stateMask = overlapFlags & OVERLAP_PAIR_STATE_MASK;
+		return (stateMask & (1 << (OVERLAP_PAIR_STATE_MASK_SHIFT + state))) != 0;
+	}
 
 	if ((overlapFlags & (OVERLAP_UNFLIPPED_VALID | OVERLAP_FLIPPED_VALID)) == 0)
 		return true; // untagged (legacy compile) -> valid in both states
 
-	int group = (box >= 0 && box < (int)s_boxFlipGroup.size()) ? s_boxFlipGroup[box] : NO_VALUE;
+	int group = (fromBox >= 0 && fromBox < (int)s_boxFlipGroup.size()) ? s_boxFlipGroup[fromBox] : NO_VALUE;
 	bool flipped = (group != NO_VALUE && group < MAX_FLIPMAP && FlipStats[group]);
 	int needBit = flipped ? OVERLAP_FLIPPED_VALID : OVERLAP_UNFLIPPED_VALID;
 	return (overlapFlags & needBit) != 0;
@@ -2517,7 +2525,7 @@ void RecomputeRuntimeZones()
 						return;
 					if (nb == cur)
 						return;
-					if (!IsBoxUsableNow(cur, liveEdge) || !IsBoxUsableNow(nb, liveEdge) || (!liveEdge && !OverlapActiveFromBox(cur, ovf)))
+					if (!IsBoxUsableNow(cur, liveEdge) || !IsBoxUsableNow(nb, liveEdge) || (!liveEdge && !OverlapActiveForEdge(cur, ovf)))
 						return;
 
 					bool canJump   = (ovf & OVERLAP_JUMP) != 0;
@@ -2611,7 +2619,7 @@ bool CanExpandToBox(LOTInfo* LOT, int fromBox, int toBox, int overlapFlags, int 
 	// FLIP-STATE VALIDITY: an overlap leaving a box is usable only if it carries the bit matching
 	// that box's REAL room flip state (not the global FlipStatus), so independent flip groups
 	// work. Untagged (legacy / synthesized seam) entries are accepted in both states.
-	if (!IsBoxUsableNow(fromBox, liveEdge) || !IsBoxUsableNow(toBox, liveEdge) || (!liveEdge && !OverlapActiveFromBox(toBox, forwardFlags)))
+	if (!IsBoxUsableNow(fromBox, liveEdge) || !IsBoxUsableNow(toBox, liveEdge) || (!liveEdge && !OverlapActiveForEdge(toBox, forwardFlags)))
 		return false;
 
 	// PENALTY CHECK: Ignore box, if it is memorized as bad.

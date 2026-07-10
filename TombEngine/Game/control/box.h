@@ -96,14 +96,22 @@ constexpr auto BOX_FLIP_NATIVE_MASK  = 0x06000000; // 0 = base-only, 1 = alt-onl
 constexpr auto BOX_FLIP_METADATA     = 0x08000000;
 
 // FLIP-STATE VALIDITY (compiler-baked, runtime BFS filter).
-// Each overlap entry carries one or both flags depending on which compiler pass
-// (Pass 1 = unflipped, Pass 2 = flipped) found the adjacency valid. Runtime BFS
-// reads the current FlipStatus and skips entries lacking the matching flag,
-// preventing stale base-geometry overlaps from being used in flipped state and
-// vice versa.
+// The legacy bits cover one flip group. Cross-group edges additionally carry the
+// exact source/target group IDs and a four-combination state mask.
 constexpr auto OVERLAP_UNFLIPPED_VALID			= 0x0001;
 constexpr auto OVERLAP_FLIPPED_VALID			= 0x0002;
 constexpr auto OVERLAP_ROUTE_EXIT_FLOOR_HINT	= 0x0004;
+// Exact validity for an edge joining independent flip groups. The group IDs and
+// four-state mask are packed into unused flag bits, preserving OVERLAP's size.
+constexpr auto OVERLAP_PAIR_STATE_MASK_SHIFT	= 3;
+constexpr auto OVERLAP_PAIR_STATE_MASK			= 0x0078;
+constexpr auto OVERLAP_PAIR_STATE_VALIDITY		= 0x0080;
+constexpr auto OVERLAP_PAIR_SOURCE_GROUP_VALIDITY = 0x0100;
+constexpr auto OVERLAP_PAIR_TARGET_GROUP_VALIDITY = 0x0200;
+constexpr auto OVERLAP_PAIR_SOURCE_GROUP_SHIFT	= 16;
+constexpr auto OVERLAP_PAIR_SOURCE_GROUP_MASK	= 0x00FF0000;
+constexpr auto OVERLAP_PAIR_TARGET_GROUP_SHIFT	= 24;
+constexpr auto OVERLAP_PAIR_TARGET_GROUP_MASK	= 0xFF000000;
 
 constexpr auto OVERLAP_JUMP						= 0x800;
 constexpr auto OVERLAP_MONKEY					= 0x2000;
