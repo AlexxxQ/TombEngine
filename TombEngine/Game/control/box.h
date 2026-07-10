@@ -151,7 +151,8 @@ void CreatureTilt(ItemInfo* item, short angle);
 short CreatureTurn(ItemInfo* item, short maxTurn);
 void CreatureDie(int itemNumber, bool doExplosion, bool forceExplosion = false);
 void CreatureDie(int itemNumber, bool doExplosion, int flags);
-bool BadFloor(int x, int y, int z, int boxHeight, int nextHeight, short roomNumber, LOTInfo* LOT);
+bool BadFloor(int x, int y, int z, int boxHeight, int nextHeight, short roomNumber, LOTInfo* LOT,
+	ItemInfo* item = nullptr, int currentBox = NO_VALUE, int floorBox = NO_VALUE, int nextBox = NO_VALUE);
 int CreatureCreature(short itemNumber);
 bool ValidBox(ItemInfo* item, short zoneNumber, short boxNumber);
 bool EscapeBox(ItemInfo* item, ItemInfo* enemy, int boxNumber);

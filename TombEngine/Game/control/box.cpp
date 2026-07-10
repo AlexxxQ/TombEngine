@@ -74,6 +74,7 @@ static bool IsBoxUsableNow(int box, bool liveEdge);
 static bool OverlapActiveFromBox(int box, int overlapFlags);
 static int ResolveRuntimeBox(int box);
 static bool TryGetCompiledOverlapFlags(int fromBox, int toBox, int& flags);
+static bool TryGetRouteEdgeFlags(int fromBox, int toBox, int& flags);
 static bool TryResolveRouteExitFloorAtVerticalPortal(ItemInfo* item, LOTInfo* LOT, Vector3i prevPos, const int* zone,
 	int currentBox, int boxHeight, FloorInfo*& floor, int& floorBox, short& roomNumber, int& height);
 
@@ -703,6 +704,50 @@ static void UpdateBadBoxes(ItemInfo* item)
 	}
 }
 
+static bool PointInsideBoxXZ(int x, int z, int boxNumber)
+{
+	if (boxNumber < 0 || boxNumber >= (int)g_Level.PathfindingBoxes.size())
+		return false;
+
+	const auto& box = g_Level.PathfindingBoxes[boxNumber];
+	return x >= (int)(box.top * BLOCK(1)) &&
+		x < (int)(box.bottom * BLOCK(1)) &&
+		z >= (int)(box.left * BLOCK(1)) &&
+		z < (int)(box.right * BLOCK(1));
+}
+
+static bool CanBypassRouteExitBlocker(int x, int z, int boxHeight, int nextHeight, LOTInfo* LOT,
+	ItemInfo* item, int currentBox, int floorBox, int nextBox, int blockedBox)
+{
+	if (item == nullptr ||
+		Objects[item->ObjectNumber].nonLot ||
+		LOT == nullptr ||
+		LOT->Zone == ZoneType::Water ||
+		LOT->Fly != NO_FLYING ||
+		LOT->IsJumping ||
+		nextBox == NO_VALUE ||
+		blockedBox == nextBox)
+		return false;
+
+	int routeFrom = (floorBox != NO_VALUE) ? floorBox : currentBox;
+	if (routeFrom == NO_VALUE || routeFrom == nextBox)
+		return false;
+
+	if ((boxHeight - nextHeight) > LOT->Step || (boxHeight - nextHeight) < LOT->Drop)
+		return false;
+
+	int routeFlags = 0;
+	bool routeExitFloorHint =
+		TryGetRouteEdgeFlags(routeFrom, nextBox, routeFlags) &&
+		OverlapActiveFromBox(routeFrom, routeFlags) &&
+		(routeFlags & OVERLAP_ROUTE_EXIT_FLOOR_HINT) != 0;
+
+	if (!routeExitFloorHint || !PointInsideBoxXZ(x, z, nextBox))
+		return false;
+
+	return true;
+}
+
 static bool TryResolveRouteExitFloorAtVerticalPortal(ItemInfo* item, LOTInfo* LOT, Vector3i prevPos, const int* zone,
 	int currentBox, int boxHeight, FloorInfo*& floor, int& floorBox, short& roomNumber, int& height)
 {
@@ -732,7 +777,7 @@ static bool TryResolveRouteExitFloorAtVerticalPortal(ItemInfo* item, LOTInfo* LO
 
 	int routeFlags = 0;
 	bool routeExitFloorHint =
-		TryGetCompiledOverlapFlags(currentBox, exitBox, routeFlags) &&
+		TryGetRouteEdgeFlags(currentBox, exitBox, routeFlags) &&
 		OverlapActiveFromBox(currentBox, routeFlags) &&
 		(routeFlags & OVERLAP_ROUTE_EXIT_FLOOR_HINT) != 0;
 
@@ -752,19 +797,20 @@ static bool TryResolveRouteExitFloorAtVerticalPortal(ItemInfo* item, LOTInfo* LO
 		if (f == nullptr || f->PathfindingBoxID == NO_VALUE)
 			return false;
 
-		int bx = f->PathfindingBoxID;
-		if (bx != exitBox)
-			return false;
-
+		int rawBx = f->PathfindingBoxID;
 		int surfaceHeight = GetFloorHeight(f, probeX, probeY, probeZ);
 		int stepUp = prevPos.y - surfaceHeight;
+
+		if (rawBx != exitBox)
+			return false;
+
 		if (stepUp <= 0 || stepUp > LOT->Step)
 			return false;
 
 		floor = f;
-		floorBox = bx;
+		floorBox = rawBx;
 		roomNumber = rn;
-		height = g_Level.PathfindingBoxes[bx].height;
+		height = g_Level.PathfindingBoxes[rawBx].height;
 		return true;
 	};
 
@@ -831,7 +877,8 @@ bool CreaturePathfind(ItemInfo* item, Vector3i prevPos, short angle, short tilt)
 	if (floor->PathfindingBoxID == NO_VALUE)
 		return false;
 
-	int floorBox = ResolveRuntimeBox(floor->PathfindingBoxID);
+	int rawFloorBox = floor->PathfindingBoxID;
+	int floorBox = ResolveRuntimeBox(rawFloorBox);
 	int height = g_Level.PathfindingBoxes[floorBox].height;
 
 	// PORTAL-Y RETRY (movement, active-guarded): at a vertical portal the head-Y floor probe
@@ -856,7 +903,9 @@ bool CreaturePathfind(ItemInfo* item, Vector3i prevPos, short angle, short tilt)
 					continue;
 				int bx = f->PathfindingBoxID;
 				int dh2 = boxHeight - g_Level.PathfindingBoxes[bx].height;
-				if (dh2 <= LOT->Step && dh2 >= LOT->Drop && zone[bx] != 0)
+				bool accept = dh2 <= LOT->Step && dh2 >= LOT->Drop && zone[bx] != 0;
+
+				if (accept)
 				{
 					floor = f;
 					floorBox = bx;
@@ -961,14 +1010,14 @@ bool CreaturePathfind(ItemInfo* item, Vector3i prevPos, short angle, short tilt)
 	// Check each sector edge based on creature's position + radius.
 	if (zPos < radius)
 	{
-		if (BadFloor(x, y, z - radius, height, nextHeight, roomNumber, LOT))
+		if (BadFloor(x, y, z - radius, height, nextHeight, roomNumber, LOT, item, currentBox, floorBox, nextBox))
 			shiftZ = radius - zPos;
 
 		if (xPos < radius)
 		{
-			if (BadFloor(x - radius, y, z, height, nextHeight, roomNumber, LOT))
+			if (BadFloor(x - radius, y, z, height, nextHeight, roomNumber, LOT, item, currentBox, floorBox, nextBox))
 				shiftX = radius - xPos;
-			else if (!shiftZ && BadFloor(x - radius, y, z - radius, height, nextHeight, roomNumber, LOT))
+			else if (!shiftZ && BadFloor(x - radius, y, z - radius, height, nextHeight, roomNumber, LOT, item, currentBox, floorBox, nextBox))
 			{
 				if (item->Pose.Orientation.y > -ANGLE(135.0f) && item->Pose.Orientation.y < ANGLE(45.0f))
 					shiftZ = radius - zPos;
@@ -978,9 +1027,9 @@ bool CreaturePathfind(ItemInfo* item, Vector3i prevPos, short angle, short tilt)
 		}
 		else if (xPos > BLOCK(1) - radius)
 		{
-			if (BadFloor(x + radius, y, z, height, nextHeight, roomNumber, LOT))
+			if (BadFloor(x + radius, y, z, height, nextHeight, roomNumber, LOT, item, currentBox, floorBox, nextBox))
 				shiftX = BLOCK(1) - radius - xPos;
-			else if (!shiftZ && BadFloor(x + radius, y, z - radius, height, nextHeight, roomNumber, LOT))
+			else if (!shiftZ && BadFloor(x + radius, y, z - radius, height, nextHeight, roomNumber, LOT, item, currentBox, floorBox, nextBox))
 			{
 				if (item->Pose.Orientation.y > -ANGLE(45.0f) && item->Pose.Orientation.y < ANGLE(135.0f))
 					shiftZ = radius - zPos;
@@ -991,14 +1040,14 @@ bool CreaturePathfind(ItemInfo* item, Vector3i prevPos, short angle, short tilt)
 	}
 	else if (zPos > BLOCK(1) - radius)
 	{
-		if (BadFloor(x, y, z + radius, height, nextHeight, roomNumber, LOT))
+		if (BadFloor(x, y, z + radius, height, nextHeight, roomNumber, LOT, item, currentBox, floorBox, nextBox))
 			shiftZ = BLOCK(1) - radius - zPos;
 
 		if (xPos < radius)
 		{
-			if (BadFloor(x - radius, y, z, height, nextHeight, roomNumber, LOT))
+			if (BadFloor(x - radius, y, z, height, nextHeight, roomNumber, LOT, item, currentBox, floorBox, nextBox))
 				shiftX = radius - xPos;
-			else if (!shiftZ && BadFloor(x - radius, y, z + radius, height, nextHeight, roomNumber, LOT))
+			else if (!shiftZ && BadFloor(x - radius, y, z + radius, height, nextHeight, roomNumber, LOT, item, currentBox, floorBox, nextBox))
 			{
 				if (item->Pose.Orientation.y > -ANGLE(45.0f) && item->Pose.Orientation.y < ANGLE(135.0f))
 					shiftX = radius - xPos;
@@ -1008,9 +1057,9 @@ bool CreaturePathfind(ItemInfo* item, Vector3i prevPos, short angle, short tilt)
 		}
 		else if (xPos > BLOCK(1) - radius)
 		{
-			if (BadFloor(x + radius, y, z, height, nextHeight, roomNumber, LOT))
+			if (BadFloor(x + radius, y, z, height, nextHeight, roomNumber, LOT, item, currentBox, floorBox, nextBox))
 				shiftX = BLOCK(1) - radius - xPos;
-			else if (!shiftZ && BadFloor(x + radius, y, z + radius, height, nextHeight, roomNumber, LOT))
+			else if (!shiftZ && BadFloor(x + radius, y, z + radius, height, nextHeight, roomNumber, LOT, item, currentBox, floorBox, nextBox))
 			{
 				if (item->Pose.Orientation.y > -ANGLE(135.0f) && item->Pose.Orientation.y < ANGLE(45.0f))
 					shiftX = BLOCK(1) - radius - xPos;
@@ -1021,12 +1070,12 @@ bool CreaturePathfind(ItemInfo* item, Vector3i prevPos, short angle, short tilt)
 	}
 	else if (xPos < radius)
 	{
-		if (BadFloor(x - radius, y, z, height, nextHeight, roomNumber, LOT))
+		if (BadFloor(x - radius, y, z, height, nextHeight, roomNumber, LOT, item, currentBox, floorBox, nextBox))
 			shiftX = radius - xPos;
 	}
 	else if (xPos > BLOCK(1) - radius)
 	{
-		if (BadFloor(x + radius, y, z, height, nextHeight, roomNumber, LOT))
+		if (BadFloor(x + radius, y, z, height, nextHeight, roomNumber, LOT, item, currentBox, floorBox, nextBox))
 			shiftX = BLOCK(1) - radius - xPos;
 	}
 
@@ -1635,18 +1684,29 @@ void CreatureDie(int itemNumber, bool doExplosion, int flags)
 	DropPickups(&item);
 }
 
-bool BadFloor(int x, int y, int z, int boxHeight, int nextHeight, short roomNumber, LOTInfo* LOT)
+bool BadFloor(int x, int y, int z, int boxHeight, int nextHeight, short roomNumber, LOTInfo* LOT,
+	ItemInfo* item, int currentBox, int floorBox, int nextBox)
 {
 	auto* floor = GetFloor(x, y, z, &roomNumber);
+	if (floor == nullptr)
+		return true;
+
 	if (floor->PathfindingBoxID == NO_VALUE)
 		return true;
 
 	if (LOT->IsJumping)
 		return false;
 
-	auto* box = &g_Level.PathfindingBoxes[floor->PathfindingBoxID];
+	int rawBox = floor->PathfindingBoxID;
+	auto* box = &g_Level.PathfindingBoxes[rawBox];
 	if (box->flags & LOT->BlockMask)
+	{
+		if (CanBypassRouteExitBlocker(x, z, boxHeight, nextHeight, LOT,
+			item, currentBox, floorBox, nextBox, rawBox))
+			return false;
+
 		return true;
+	}
 
 	int height = box->height;
 	bool heightResult = false;
@@ -1659,6 +1719,10 @@ bool BadFloor(int x, int y, int z, int boxHeight, int nextHeight, short roomNumb
 
 	if (LOT->Fly != NO_FLYING && y > (height + LOT->Fly))
 		heightResult = true;
+
+	if (heightResult && CanBypassRouteExitBlocker(x, z, boxHeight, nextHeight, LOT,
+		item, currentBox, floorBox, nextBox, rawBox))
+		heightResult = false;
 
 	// PORTAL-Y RETRY: GetFloor only traverses a floor portal when the probe Y is at-or-below
 	// the portal's Y. For a TALL creature whose head Y lands ABOVE the destination's portal,
@@ -2127,6 +2191,26 @@ static bool TryGetCompiledOverlapFlags(int fromBox, int toBox, int& flags)
 	return false;
 }
 
+static bool TryGetRouteEdgeFlags(int fromBox, int toBox, int& flags)
+{
+	if (TryGetCompiledOverlapFlags(fromBox, toBox, flags))
+		return true;
+
+	if (fromBox < 0 || fromBox >= (int)s_seamEdges.size())
+		return false;
+
+	for (const auto& edge : s_seamEdges[fromBox])
+	{
+		if (edge.box != toBox)
+			continue;
+
+		flags = edge.flags;
+		return true;
+	}
+
+	return false;
+}
+
 static int GetRoomFlipGroup(const RoomData& room)
 {
 	return (room.flipNumber != NO_VALUE && room.flipNumber >= 0 && room.flipNumber < MAX_FLIPMAP) ? room.flipNumber : NO_VALUE;
@@ -2277,7 +2361,11 @@ static void TryAddLiveSeamEdge(
 	if (abs(dh) > BLOCK(2))
 		return;
 
-	AddRuntimeSeamEdge(fromBox, toBox, hasCompiledOverlap ? compiledFlags : 0);
+	int flags = hasCompiledOverlap ? compiledFlags : 0;
+	if (!hasCompiledOverlap && dh != 0 && abs(dh) <= CLICK(4))
+		flags |= OVERLAP_ROUTE_EXIT_FLOOR_HINT;
+
+	AddRuntimeSeamEdge(fromBox, toBox, flags);
 }
 
 // Synthesize live adjacencies the 2-pass compiler can't represent safely. In mixed flip states,
@@ -3207,6 +3295,8 @@ int TargetReachable(ItemInfo* item, ItemInfo* enemy)
 	const auto& creature = *GetCreatureInfo(item);
 	auto& room = g_Level.Rooms[enemy->RoomNumber];
 	auto* floor = GetSector(&room, enemy->Pose.Position.x - room.Position.x, enemy->Pose.Position.z - room.Position.z);
+	int floorBox = floor->PathfindingBoxID;
+	int resolvedFloorBox = ResolveRuntimeBox(floorBox);
 
 	// NEW: Only update enemy box number if it is actually reachable by the enemy.
 	// This prevents enemies from running to the player and attacking nothing when they are hanging or shimmying. -- Lwmte, 27.06.22
@@ -3230,6 +3320,8 @@ int TargetReachable(ItemInfo* item, ItemInfo* enemy)
 		auto pointColl = GetPointCollision(enemy->Pose.Position, floor->RoomNumber);
 		auto bounds = GameBoundingBox(item);
 		isReachable = abs(enemy->Pose.Position.y - pointColl.GetFloorHeight()) < bounds.GetHeight();
+		floorBox = pointColl.GetSector().PathfindingBoxID;
+		resolvedFloorBox = ResolveRuntimeBox(floorBox);
 
 		if (creature.LOT.Zone == ZoneType::Amphibious && isEnemyInWater)
 		{
@@ -3245,17 +3337,16 @@ int TargetReachable(ItemInfo* item, ItemInfo* enemy)
 	}
 
 	// Don't try to chase enemy into bad boxes.
-	int floorBox = floor->PathfindingBoxID;
 	for (auto& box : creature.LOT.BadBoxes)
 	{
-		if (box.BoxNumber == floorBox && box.Count < 0)
+		if ((box.BoxNumber == floorBox || box.BoxNumber == resolvedFloorBox) && box.Count < 0)
 		{
 			isReachable = false;
 			break;
 		}
 	}
 
-	return (isReachable ? floorBox : NO_VALUE);
+	return (isReachable ? resolvedFloorBox : NO_VALUE);
 }
 
 /**
