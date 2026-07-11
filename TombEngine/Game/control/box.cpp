@@ -70,22 +70,18 @@ using PathQueue = std::priority_queue<QueueElement, std::vector<QueueElement>, s
 
 // Runtime per-combination zone re-flood helpers (defined further down, used earlier).
 static bool IsBoxActiveNow(int box);
-static bool IsBoxUsableNow(int box, bool liveEdge);
+static bool IsBoxUsableNow(int box);
 static bool OverlapActiveForEdge(int fromBox, int overlapFlags);
 static int ResolveRuntimeBox(int box);
 static bool TryGetCompiledOverlapFlags(int fromBox, int toBox, int& flags);
-static bool TryGetRouteEdgeFlags(int fromBox, int toBox, int& flags);
 static bool TryResolveRouteExitFloorAtVerticalPortal(ItemInfo* item, LOTInfo* LOT, Vector3i prevPos, const int* zone,
 	int currentBox, int boxHeight, FloorInfo*& floor, int& floorBox, short& roomNumber, int& height);
 
-struct RuntimePathEdge
+struct ReversePathEdge
 {
 	int box = NO_VALUE;
 	int flags = 0;
-	bool live = false;
 };
-
-static const std::vector<RuntimePathEdge>& GetSeamEdgesForBox(int box);
 
 // AI behavior distance thresholds.
 constexpr auto REACHED_GOAL_RADIUS = BLOCK(0.625f);	// Distance at which AI considers goal reached.
@@ -200,7 +196,7 @@ void DrawLaraPathfinding(int boxIndex)
 
 	DrawBox(boxIndex, currentBoxColor);
 
-	if (!IsBoxUsableNow(boxIndex, false))
+	if (!IsBoxUsableNow(boxIndex))
 		return;
 
 	// FLIPMAP-AWARE OVERLAP FILTER.
@@ -218,7 +214,7 @@ void DrawLaraPathfinding(int boxIndex)
 		auto overlap = g_Level.Overlaps[index];
 
 		int overlapBox = ResolveRuntimeBox(overlap.box);
-		if (IsBoxUsableNow(overlapBox, false) && OverlapActiveForEdge(boxIndex, overlap.flags))
+		if (IsBoxUsableNow(overlapBox) && OverlapActiveForEdge(boxIndex, overlap.flags))
 			DrawBox(overlapBox, Vector3(1, 1, 0));
 
 		if (overlap.flags & OVERLAP_END_BIT)
@@ -227,12 +223,6 @@ void DrawLaraPathfinding(int boxIndex)
 			index++;
 	}
 
-	for (auto seamEdge : GetSeamEdgesForBox(boxIndex))
-	{
-		int seamBox = seamEdge.box;
-		if (IsBoxUsableNow(seamBox, true))
-			DrawBox(seamBox, Vector3(1, 1, 0));
-	}
 }
 
 void DrawItemPathfinding(int itemNumber)
@@ -738,7 +728,7 @@ static bool CanBypassRouteExitBlocker(int x, int z, int boxHeight, int nextHeigh
 
 	int routeFlags = 0;
 	bool routeExitFloorHint =
-		TryGetRouteEdgeFlags(routeFrom, nextBox, routeFlags) &&
+		TryGetCompiledOverlapFlags(routeFrom, nextBox, routeFlags) &&
 		OverlapActiveForEdge(routeFrom, routeFlags) &&
 		(routeFlags & OVERLAP_ROUTE_EXIT_FLOOR_HINT) != 0;
 
@@ -777,7 +767,7 @@ static bool TryResolveRouteExitFloorAtVerticalPortal(ItemInfo* item, LOTInfo* LO
 
 	int routeFlags = 0;
 	bool routeExitFloorHint =
-		TryGetRouteEdgeFlags(currentBox, exitBox, routeFlags) &&
+		TryGetCompiledOverlapFlags(currentBox, exitBox, routeFlags) &&
 		OverlapActiveForEdge(currentBox, routeFlags) &&
 		(routeFlags & OVERLAP_ROUTE_EXIT_FLOOR_HINT) != 0;
 
@@ -1990,12 +1980,10 @@ bool SearchLOT(LOTInfo* LOT, int depth)
 static std::vector<int>         s_boxFlipGroup;   // flip group of each box's room, or NO_VALUE
 static std::vector<signed char> s_boxNativeState; // 0 = base-only, 1 = alt-only, 2 = both (merged / non-alternated)
 static std::vector<int>         s_runtimeZones[(int)ZoneType::MaxZone];
-static std::vector<std::vector<RuntimePathEdge>> s_seamEdges; // per box: live room-sector neighbours that compiled overlaps can't represent safely
-static std::vector<char>        s_liveEdgeBoxes; // boxes reachable through live room-sector edges, even if global metadata says inactive
 static std::vector<char>        s_runtimeActiveBoxes; // boxes present in currently active room-sector data
 static std::vector<int>         s_runtimeBoxAliases; // inactive overlay boxes redirected to active live boxes
 
-static std::vector<std::vector<RuntimePathEdge>> s_reverseEdges; // per target box: boxes that can move forward into it
+static std::vector<std::vector<ReversePathEdge>> s_reverseEdges; // per target box: boxes that can move forward into it
 
 static int ResolveRuntimeBox(int box)
 {
@@ -2003,16 +1991,6 @@ static int ResolveRuntimeBox(int box)
 		return box;
 
 	return s_runtimeBoxAliases[box];
-}
-
-static const std::vector<RuntimePathEdge>& GetSeamEdgesForBox(int box)
-{
-	static const std::vector<RuntimePathEdge> empty = {};
-
-	if (box < 0 || box >= (int)s_seamEdges.size())
-		return empty;
-
-	return s_seamEdges[box];
 }
 
 static int ResolveCreatureCurrentBox(ItemInfo* item)
@@ -2031,15 +2009,15 @@ static int ResolveCreatureCurrentBox(ItemInfo* item)
 	auto& sector = pointColl.GetSector();
 	int resolvedBox = sector.PathfindingBoxID;
 
-	if (resolvedBox == NO_VALUE || !IsBoxUsableNow(resolvedBox, false))
+	if (resolvedBox == NO_VALUE || !IsBoxUsableNow(resolvedBox))
 	{
 		auto& bottomSector = pointColl.GetBottomSector();
-		if (bottomSector.PathfindingBoxID != NO_VALUE && IsBoxUsableNow(bottomSector.PathfindingBoxID, false))
+		if (bottomSector.PathfindingBoxID != NO_VALUE && IsBoxUsableNow(bottomSector.PathfindingBoxID))
 			resolvedBox = bottomSector.PathfindingBoxID;
 	}
 
-	if ((resolvedBox == NO_VALUE || !IsBoxUsableNow(resolvedBox, false)) &&
-		legacyBox != NO_VALUE && IsBoxUsableNow(legacyBox, false))
+	if ((resolvedBox == NO_VALUE || !IsBoxUsableNow(resolvedBox)) &&
+		legacyBox != NO_VALUE && IsBoxUsableNow(legacyBox))
 		resolvedBox = legacyBox;
 
 	return resolvedBox;
@@ -2130,20 +2108,14 @@ static bool IsBoxActiveNow(int box)
 	return (native == 0) ? !flipped : flipped; // base-only active while unflipped; alt-only while flipped
 }
 
-static bool IsBoxUsableNow(int box, bool liveEdge)
+static bool IsBoxUsableNow(int box)
 {
 	if (box < 0 || box >= (int)s_boxNativeState.size())
 		return false;
 
-	if (IsBoxActiveNow(box) &&
+	return IsBoxActiveNow(box) &&
 		(s_runtimeActiveBoxes.empty() ||
-		 (box < (int)s_runtimeActiveBoxes.size() && s_runtimeActiveBoxes[box] != 0)))
-		return true;
-
-	return liveEdge &&
-		box >= 0 &&
-		box < (int)s_liveEdgeBoxes.size() &&
-		s_liveEdgeBoxes[box] != 0;
+		 (box < (int)s_runtimeActiveBoxes.size() && s_runtimeActiveBoxes[box] != 0));
 }
 
 // Cross-group entries carry their exact compiler room groups and state mask. Legacy entries
@@ -2194,26 +2166,6 @@ static bool TryGetCompiledOverlapFlags(int fromBox, int toBox, int& flags)
 			break;
 
 		index++;
-	}
-
-	return false;
-}
-
-static bool TryGetRouteEdgeFlags(int fromBox, int toBox, int& flags)
-{
-	if (TryGetCompiledOverlapFlags(fromBox, toBox, flags))
-		return true;
-
-	if (fromBox < 0 || fromBox >= (int)s_seamEdges.size())
-		return false;
-
-	for (const auto& edge : s_seamEdges[fromBox])
-	{
-		if (edge.box != toBox)
-			continue;
-
-		flags = edge.flags;
-		return true;
 	}
 
 	return false;
@@ -2293,12 +2245,8 @@ static void BuildRuntimeBoxAliases(const std::vector<int>& activeLiveBoxes, cons
 	}
 }
 
-// Rebuild active-box discovery and aliases from the current room sectors.
-void BuildSeamEdges()
+static void BuildRuntimeBoxState()
 {
-	int boxCount = (int)g_Level.PathfindingBoxes.size();
-	s_seamEdges.assign(boxCount, {});
-	s_liveEdgeBoxes.assign(boxCount, false);
 	std::vector<int> activeLiveBoxes;
 	auto activeLiveBoxSet = BuildActiveLiveBoxSet(activeLiveBoxes);
 	s_runtimeActiveBoxes = activeLiveBoxSet;
@@ -2310,14 +2258,14 @@ void BuildReversePathfindingEdges()
 	int boxCount = (int)g_Level.PathfindingBoxes.size();
 	s_reverseEdges.assign(boxCount, {});
 
-	auto addReverseEdge = [&](int fromBox, int toBox, int flags, bool live)
+	auto addReverseEdge = [&](int fromBox, int toBox, int flags)
 	{
 		if (fromBox < 0 || fromBox >= boxCount || toBox < 0 || toBox >= boxCount)
 			return;
 		if (fromBox == toBox)
 			return;
 
-		s_reverseEdges[toBox].push_back({ fromBox, flags, live });
+		s_reverseEdges[toBox].push_back({ fromBox, flags });
 	};
 
 	for (int fromBox = 0; fromBox < boxCount; fromBox++)
@@ -2330,14 +2278,8 @@ void BuildReversePathfindingEdges()
 			{
 				const auto& overlap = g_Level.Overlaps[index++];
 				last = (overlap.flags & OVERLAP_END_BIT) != 0;
-				addReverseEdge(fromBox, overlap.box, overlap.flags, false);
+				addReverseEdge(fromBox, overlap.box, overlap.flags);
 			}
-		}
-
-		if (fromBox < (int)s_seamEdges.size())
-		{
-			for (const auto& edge : s_seamEdges[fromBox])
-				addReverseEdge(fromBox, edge.box, edge.flags, true);
 		}
 	}
 }
@@ -2348,7 +2290,7 @@ void RecomputeRuntimeZones()
 	if ((int)s_boxNativeState.size() != boxCount)
 		BuildPathfindingFlipMetadata();
 
-	BuildSeamEdges();
+	BuildRuntimeBoxState();
 	BuildReversePathfindingEdges();
 
 	std::vector<int> stack;
@@ -2364,7 +2306,7 @@ void RecomputeRuntimeZones()
 		int zoneCounter = 1;
 		for (int seed = 0; seed < boxCount; seed++)
 		{
-			if (zones[seed] != 0 || !IsBoxUsableNow(seed, false))
+			if (zones[seed] != 0 || !IsBoxUsableNow(seed))
 				continue;
 
 			bool seedWater   = (g_Level.PathfindingBoxes[seed].flags & BOX_WATER) != 0;
@@ -2379,14 +2321,13 @@ void RecomputeRuntimeZones()
 				int cur = stack.back();
 				stack.pop_back();
 
-				// Per-neighbour flood step, shared by compiled overlaps and synthesized seam edges.
-				auto processNeighbor = [&](int nb, int ovf, bool liveEdge)
+				auto processNeighbor = [&](int nb, int ovf)
 				{
 					if (nb < 0 || nb >= boxCount || zones[nb] != 0)
 						return;
 					if (nb == cur)
 						return;
-					if (!IsBoxUsableNow(cur, liveEdge) || !IsBoxUsableNow(nb, liveEdge) || (!liveEdge && !OverlapActiveForEdge(cur, ovf)))
+					if (!IsBoxUsableNow(cur) || !IsBoxUsableNow(nb) || !OverlapActiveForEdge(cur, ovf))
 						return;
 
 					bool canJump   = (ovf & OVERLAP_JUMP) != 0;
@@ -2435,7 +2376,7 @@ void RecomputeRuntimeZones()
 
 				// Compiled overlaps.
 				int index = g_Level.PathfindingBoxes[cur].overlapIndex;
-				if (index >= 0 && IsBoxUsableNow(cur, false))
+				if (index >= 0 && IsBoxUsableNow(cur))
 				{
 					bool last = false;
 					while (!last && index < (int)g_Level.Overlaps.size())
@@ -2443,14 +2384,9 @@ void RecomputeRuntimeZones()
 						const auto& overlap = g_Level.Overlaps[index];
 						last = (overlap.flags & OVERLAP_END_BIT) != 0;
 						index++;
-						processNeighbor(overlap.box, overlap.flags, false);
+						processNeighbor(overlap.box, overlap.flags);
 					}
 				}
-
-				// Synthesized cross-flip-group seam edges.
-				if (cur < (int)s_seamEdges.size())
-					for (const auto& edge : s_seamEdges[cur])
-						processNeighbor(edge.box, edge.flags, true);
 			}
 
 			zoneCounter++;
@@ -2459,7 +2395,7 @@ void RecomputeRuntimeZones()
 
 }
 
-bool CanExpandToBox(LOTInfo* LOT, int fromBox, int toBox, int overlapFlags, int searchZone, const std::vector<int>& zone, bool liveEdge)
+bool CanExpandToBox(LOTInfo* LOT, int fromBox, int toBox, int overlapFlags, int searchZone, const std::vector<int>& zone)
 {
 	if (fromBox == NO_VALUE || toBox == NO_VALUE)
 		return false;
@@ -2479,8 +2415,8 @@ bool CanExpandToBox(LOTInfo* LOT, int fromBox, int toBox, int overlapFlags, int 
 
 	// FLIP-STATE VALIDITY: an overlap leaving a box is usable only if it carries the bit matching
 	// that box's REAL room flip state (not the global FlipStatus), so independent flip groups
-	// work. Untagged (legacy / synthesized seam) entries are accepted in both states.
-	if (!IsBoxUsableNow(fromBox, liveEdge) || !IsBoxUsableNow(toBox, liveEdge) || (!liveEdge && !OverlapActiveForEdge(toBox, forwardFlags)))
+	// work. Untagged legacy entries are accepted in both states.
+	if (!IsBoxUsableNow(fromBox) || !IsBoxUsableNow(toBox) || !OverlapActiveForEdge(toBox, forwardFlags))
 		return false;
 
 	// PENALTY CHECK: Ignore box, if it is memorized as bad.
@@ -2547,13 +2483,12 @@ bool SearchLOT_BFS(LOTInfo* LOT, int depth)
 		auto* node = &LOT->Node[LOT->Head];
 		int searchZone = zone[LOT->Head];
 
-		// Per-neighbour expansion, shared by compiled overlaps and synthesized seam edges.
-		auto expandNeighbor = [&](int boxNumber, int flags, bool liveEdge)
+		auto expandNeighbor = [&](int boxNumber, int flags)
 		{
 			if (boxNumber == NO_VALUE || boxNumber == LOT->Head)
 				return;
 
-			if (!CanExpandToBox(LOT, LOT->Head, boxNumber, flags, searchZone, zone, liveEdge))
+			if (!CanExpandToBox(LOT, LOT->Head, boxNumber, flags, searchZone, zone))
 				return;
 
 			// SEARCH STATE: Check if we've already visited this box.
@@ -2599,7 +2534,7 @@ bool SearchLOT_BFS(LOTInfo* LOT, int depth)
 		if (LOT->Head < (int)s_reverseEdges.size())
 		{
 			for (const auto& edge : s_reverseEdges[LOT->Head])
-				expandNeighbor(edge.box, edge.flags, edge.live);
+				expandNeighbor(edge.box, edge.flags);
 		}
 
 		// Move to next box in queue.
@@ -2698,14 +2633,13 @@ bool SearchLOT_DijkstraAStar(LOTInfo* LOT, int depth, PathfindingMode mode)
 		int searchZone = zone[headBox];
 		auto currentCenter = GetBoxCenter(headBox);
 
-		// Per-neighbour expansion, shared by compiled overlaps and synthesized seam edges.
-		auto expandNeighbor = [&](int boxNumber, int flags, bool liveEdge)
+		auto expandNeighbor = [&](int boxNumber, int flags)
 		{
 			if (boxNumber == NO_VALUE || boxNumber == headBox)
 				return;
 
 			// Unified traversal checks (zone, cooldown, height, jump, etc).
-			if (!CanExpandToBox(LOT, headBox, boxNumber, flags, searchZone, zone, liveEdge))
+			if (!CanExpandToBox(LOT, headBox, boxNumber, flags, searchZone, zone))
 				return;
 
 			auto* expand = &LOT->Node[boxNumber];
@@ -2755,7 +2689,7 @@ bool SearchLOT_DijkstraAStar(LOTInfo* LOT, int depth, PathfindingMode mode)
 		if (headBox < (int)s_reverseEdges.size())
 		{
 			for (const auto& edge : s_reverseEdges[headBox])
-				expandNeighbor(edge.box, edge.flags, edge.live);
+				expandNeighbor(edge.box, edge.flags);
 		}
 	}
 

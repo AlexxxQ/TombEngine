@@ -169,7 +169,7 @@ bool UpdateLOT(LOTInfo* LOT, int expansion);
 bool SearchLOT(LOTInfo* LOT, int expansion);
 bool SearchLOT_BFS(LOTInfo* LOT, int depth);
 bool SearchLOT_DijkstraAStar(LOTInfo* LOT, int depth, PathfindingMode mode);
-bool CanExpandToBox(LOTInfo* LOT, int fromBox, int toBox, int overlapFlags, int searchZone, const std::vector<int>& zone, bool liveEdge);
+bool CanExpandToBox(LOTInfo* LOT, int fromBox, int toBox, int overlapFlags, int searchZone, const std::vector<int>& zone);
 bool CreatureActive(short itemNumber);
 void InitializeCreature(short itemNumber);
 bool StalkBox(ItemInfo* item, ItemInfo* enemy, int boxNumber);
