@@ -2219,24 +2219,6 @@ static bool TryGetRouteEdgeFlags(int fromBox, int toBox, int& flags)
 	return false;
 }
 
-static bool AddRuntimeSeamEdge(int fromBox, int toBox, int flags = 0)
-{
-	auto& adj = s_seamEdges[fromBox];
-	for (auto& edge : adj)
-	{
-		if (edge.box != toBox)
-			continue;
-
-		edge.flags |= flags;
-		return false;
-	}
-
-	adj.push_back({ toBox, flags, true });
-	s_liveEdgeBoxes[fromBox] = true;
-	s_liveEdgeBoxes[toBox] = true;
-	return true;
-}
-
 static int GetBoxOverlapAreaXZ(int a, int b)
 {
 	int boxCount = (int)g_Level.PathfindingBoxes.size();
@@ -2311,56 +2293,7 @@ static void BuildRuntimeBoxAliases(const std::vector<int>& activeLiveBoxes, cons
 	}
 }
 
-static void TryAddLiveVerticalPortalEdge(
-	int sourceBox,
-	int destBox,
-	int destRoomNumber)
-{
-	int boxCount = (int)g_Level.PathfindingBoxes.size();
-	if (destBox == NO_VALUE || destBox >= boxCount || destBox == sourceBox)
-		return;
-	if (destRoomNumber < 0 || destRoomNumber >= (int)g_Level.Rooms.size())
-		return;
-
-	auto& destRoom = g_Level.Rooms[destRoomNumber];
-	if (!destRoom.Active())
-		return;
-
-	int fromBox = ResolveRuntimeBox(sourceBox);
-	int toBox = ResolveRuntimeBox(destBox);
-	if (fromBox == NO_VALUE || toBox == NO_VALUE || fromBox >= boxCount || toBox >= boxCount || fromBox == toBox)
-		return;
-
-	bool activeVerticalPortalSeam =
-		fromBox >= 0 &&
-		fromBox < (int)s_runtimeActiveBoxes.size() &&
-		toBox >= 0 &&
-		toBox < (int)s_runtimeActiveBoxes.size() &&
-		s_runtimeActiveBoxes[fromBox] != 0 &&
-		s_runtimeActiveBoxes[toBox] != 0;
-	int dh = g_Level.PathfindingBoxes[fromBox].height - g_Level.PathfindingBoxes[toBox].height;
-	int compiledFlags = 0;
-	bool hasCompiledOverlap = TryGetCompiledOverlapFlags(fromBox, toBox, compiledFlags);
-
-	if (!activeVerticalPortalSeam)
-		return;
-	if (hasCompiledOverlap && OverlapActiveForEdge(fromBox, compiledFlags))
-		return;
-
-	// Keep only a vertical portal the compiled graph missed. Per-creature Step/Drop is
-	// enforced later in CanExpandToBox.
-	if (abs(dh) > BLOCK(2))
-		return;
-
-	int flags = 0;
-	if (dh != 0 && abs(dh) <= CLICK(4))
-		flags |= OVERLAP_ROUTE_EXIT_FLOOR_HINT;
-
-	AddRuntimeSeamEdge(fromBox, toBox, flags);
-}
-
-// Keep a live fallback for vertical portals absent from the compiled graph. Active-box discovery
-// and aliases are also rebuilt here from the current room sectors.
+// Rebuild active-box discovery and aliases from the current room sectors.
 void BuildSeamEdges()
 {
 	int boxCount = (int)g_Level.PathfindingBoxes.size();
@@ -2370,39 +2303,6 @@ void BuildSeamEdges()
 	auto activeLiveBoxSet = BuildActiveLiveBoxSet(activeLiveBoxes);
 	s_runtimeActiveBoxes = activeLiveBoxSet;
 	BuildRuntimeBoxAliases(activeLiveBoxes, activeLiveBoxSet);
-
-	for (int rn = 0; rn < (int)g_Level.Rooms.size(); rn++)
-	{
-		auto& room = g_Level.Rooms[rn];
-		if (!room.Active())
-			continue;
-
-		for (int sx = 0; sx < room.XSize; sx++)
-		{
-			for (int sz = 0; sz < room.ZSize; sz++)
-			{
-				auto& sector = room.Sectors[sx * room.ZSize + sz];
-				int B = sector.PathfindingBoxID;
-				if (B == NO_VALUE || B >= boxCount)
-					continue;
-
-				int wx = room.Position.x + sx * BLOCK(1) + BLOCK(0.5f);
-				int wz = room.Position.z + sz * BLOCK(1) + BLOCK(0.5f);
-				auto addVerticalPortalEdge = [&](bool isBelow)
-				{
-					auto nextRoom = sector.GetNextRoomNumber(wx, wz, isBelow);
-					if (!nextRoom.has_value())
-						return;
-
-					auto& nextSector = TEN::Collision::Floordata::GetFloor(*nextRoom, wx, wz);
-					TryAddLiveVerticalPortalEdge(B, nextSector.PathfindingBoxID, *nextRoom);
-				};
-
-				addVerticalPortalEdge(true);
-				addVerticalPortalEdge(false);
-			}
-		}
-	}
 }
 
 void BuildReversePathfindingEdges()
