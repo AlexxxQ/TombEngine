@@ -2219,16 +2219,6 @@ static bool TryGetRouteEdgeFlags(int fromBox, int toBox, int& flags)
 	return false;
 }
 
-static int GetRoomFlipGroup(const RoomData& room)
-{
-	return (room.flipNumber != NO_VALUE && room.flipNumber >= 0 && room.flipNumber < MAX_FLIPMAP) ? room.flipNumber : NO_VALUE;
-}
-
-static int GetFlipGroupState(int group)
-{
-	return (group != NO_VALUE && group >= 0 && group < MAX_FLIPMAP && FlipStats[group]) ? 1 : 0;
-}
-
 static bool AddRuntimeSeamEdge(int fromBox, int toBox, int flags = 0)
 {
 	auto& adj = s_seamEdges[fromBox];
@@ -2321,12 +2311,10 @@ static void BuildRuntimeBoxAliases(const std::vector<int>& activeLiveBoxes, cons
 	}
 }
 
-static void TryAddLiveSeamEdge(
+static void TryAddLiveVerticalPortalEdge(
 	int sourceBox,
 	int destBox,
-	int destRoomNumber,
-	int sourceGroup,
-	bool allowActiveVerticalPortalEdge)
+	int destRoomNumber)
 {
 	int boxCount = (int)g_Level.PathfindingBoxes.size();
 	if (destBox == NO_VALUE || destBox >= boxCount || destBox == sourceBox)
@@ -2343,13 +2331,7 @@ static void TryAddLiveSeamEdge(
 	if (fromBox == NO_VALUE || toBox == NO_VALUE || fromBox >= boxCount || toBox >= boxCount || fromBox == toBox)
 		return;
 
-	int fromGroup = (fromBox != sourceBox) ? s_boxFlipGroup[fromBox] : sourceGroup;
-	int destGroup = (toBox != destBox) ? s_boxFlipGroup[toBox] : GetRoomFlipGroup(destRoom);
-	int sourceState = GetFlipGroupState(fromGroup);
-	int destState = GetFlipGroupState(destGroup);
-	bool mixedGroupSeam = fromGroup != destGroup && sourceState != destState;
 	bool activeVerticalPortalSeam =
-		allowActiveVerticalPortalEdge &&
 		fromBox >= 0 &&
 		fromBox < (int)s_runtimeActiveBoxes.size() &&
 		toBox >= 0 &&
@@ -2360,27 +2342,25 @@ static void TryAddLiveSeamEdge(
 	int compiledFlags = 0;
 	bool hasCompiledOverlap = TryGetCompiledOverlapFlags(fromBox, toBox, compiledFlags);
 
-	if (!mixedGroupSeam && !activeVerticalPortalSeam)
-		return; // horizontal same-state live neighbours must not resurrect inactive phantom boxes
+	if (!activeVerticalPortalSeam)
+		return;
+	if (hasCompiledOverlap && OverlapActiveForEdge(fromBox, compiledFlags))
+		return;
 
-	// Mixed-state cross-group seam, or a real active vertical-portal seam not expressible by
-	// compiled overlaps. Keep it if the floor step is plausibly walkable; the per-creature
-	// Step/Drop is enforced later in CanExpandToBox.
+	// Keep only a vertical portal the compiled graph missed. Per-creature Step/Drop is
+	// enforced later in CanExpandToBox.
 	if (abs(dh) > BLOCK(2))
 		return;
 
-	int flags = hasCompiledOverlap ? compiledFlags : 0;
-	if (!hasCompiledOverlap && dh != 0 && abs(dh) <= CLICK(4))
+	int flags = 0;
+	if (dh != 0 && abs(dh) <= CLICK(4))
 		flags |= OVERLAP_ROUTE_EXIT_FLOOR_HINT;
 
 	AddRuntimeSeamEdge(fromBox, toBox, flags);
 }
 
-// Synthesize live adjacencies the 2-pass compiler can't represent safely. In mixed flip states,
-// compiled overlaps can point at base/alt boxes that don't both exist. Also, the same box ID can
-// appear in an active room while global box metadata says it's inactive because that ID was first
-// classified under another flip group. Rebuild those edges from LIVE room-sector data and keep
-// them separate from compiled overlaps so metadata-conflict boxes don't open stale compiled paths.
+// Keep a live fallback for vertical portals absent from the compiled graph. Active-box discovery
+// and aliases are also rebuilt here from the current room sectors.
 void BuildSeamEdges()
 {
 	int boxCount = (int)g_Level.PathfindingBoxes.size();
@@ -2391,16 +2371,11 @@ void BuildSeamEdges()
 	s_runtimeActiveBoxes = activeLiveBoxSet;
 	BuildRuntimeBoxAliases(activeLiveBoxes, activeLiveBoxSet);
 
-	static const int dx[4] = { BLOCK(1), -BLOCK(1), 0, 0 };
-	static const int dz[4] = { 0, 0, BLOCK(1), -BLOCK(1) };
-
 	for (int rn = 0; rn < (int)g_Level.Rooms.size(); rn++)
 	{
 		auto& room = g_Level.Rooms[rn];
 		if (!room.Active())
 			continue;
-
-		int sourceGroup = GetRoomFlipGroup(room);
 
 		for (int sx = 0; sx < room.XSize; sx++)
 		{
@@ -2413,14 +2388,6 @@ void BuildSeamEdges()
 
 				int wx = room.Position.x + sx * BLOCK(1) + BLOCK(0.5f);
 				int wz = room.Position.z + sz * BLOCK(1) + BLOCK(0.5f);
-				int wy = g_Level.PathfindingBoxes[B].height - CLICK(1); // just above this box's floor
-
-				auto addLiveSeamEdge = [&](int Bp, int destRoomNumber)
-				{
-					TryAddLiveSeamEdge(
-						B, Bp, destRoomNumber, sourceGroup, false);
-				};
-
 				auto addVerticalPortalEdge = [&](bool isBelow)
 				{
 					auto nextRoom = sector.GetNextRoomNumber(wx, wz, isBelow);
@@ -2428,17 +2395,11 @@ void BuildSeamEdges()
 						return;
 
 					auto& nextSector = TEN::Collision::Floordata::GetFloor(*nextRoom, wx, wz);
-					TryAddLiveSeamEdge(B, nextSector.PathfindingBoxID, *nextRoom, sourceGroup, true);
+					TryAddLiveVerticalPortalEdge(B, nextSector.PathfindingBoxID, *nextRoom);
 				};
 
 				addVerticalPortalEdge(true);
 				addVerticalPortalEdge(false);
-
-				for (int d = 0; d < 4; d++)
-				{
-					auto pc = GetPointCollision(Vector3i(wx + dx[d], wy, wz + dz[d]), rn);
-					addLiveSeamEdge(pc.GetSector().PathfindingBoxID, pc.GetRoomNumber());
-				}
 			}
 		}
 	}
