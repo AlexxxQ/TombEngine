@@ -2185,10 +2185,10 @@ static int GetBoxOverlapAreaXZ(int a, int b)
 	return (xOverlap > 0 && zOverlap > 0) ? xOverlap * zOverlap : 0;
 }
 
-static std::vector<char> BuildActiveLiveBoxSet(std::vector<int>& activeLiveBoxes)
+static std::vector<char> BuildActiveBoxSet(std::vector<int>& activeBoxes)
 {
 	int boxCount = (int)g_Level.PathfindingBoxes.size();
-	std::vector<char> activeLiveBoxSet(boxCount, false);
+	std::vector<char> activeBoxSet(boxCount, false);
 
 	for (const auto& room : g_Level.Rooms)
 	{
@@ -2201,18 +2201,18 @@ static std::vector<char> BuildActiveLiveBoxSet(std::vector<int>& activeLiveBoxes
 			if (box != NO_VALUE &&
 				box < boxCount &&
 				IsBoxActiveNow(box) &&
-				!activeLiveBoxSet[box])
+				!activeBoxSet[box])
 			{
-				activeLiveBoxes.push_back(box);
-				activeLiveBoxSet[box] = true;
+				activeBoxes.push_back(box);
+				activeBoxSet[box] = true;
 			}
 		}
 	}
 
-	return activeLiveBoxSet;
+	return activeBoxSet;
 }
 
-static void BuildRuntimeBoxAliases(const std::vector<int>& activeLiveBoxes, const std::vector<char>& activeLiveBoxSet)
+static void BuildRuntimeBoxAliases(const std::vector<int>& activeBoxes, const std::vector<char>& activeBoxSet)
 {
 	int boxCount = (int)g_Level.PathfindingBoxes.size();
 	s_runtimeBoxAliases.resize(boxCount);
@@ -2221,13 +2221,13 @@ static void BuildRuntimeBoxAliases(const std::vector<int>& activeLiveBoxes, cons
 
 	for (int overlayBox = 0; overlayBox < boxCount; overlayBox++)
 	{
-		if (activeLiveBoxSet[overlayBox] != 0)
+		if (activeBoxSet[overlayBox] != 0)
 			continue;
 
 		int bestBox = NO_VALUE;
 		int bestArea = 0;
 
-		for (int activeBox : activeLiveBoxes)
+		for (int activeBox : activeBoxes)
 		{
 			int area = GetBoxOverlapAreaXZ(overlayBox, activeBox);
 			if (area <= 0)
@@ -2243,14 +2243,6 @@ static void BuildRuntimeBoxAliases(const std::vector<int>& activeLiveBoxes, cons
 		if (bestBox != NO_VALUE)
 			s_runtimeBoxAliases[overlayBox] = bestBox;
 	}
-}
-
-static void BuildRuntimeBoxState()
-{
-	std::vector<int> activeLiveBoxes;
-	auto activeLiveBoxSet = BuildActiveLiveBoxSet(activeLiveBoxes);
-	s_runtimeActiveBoxes = activeLiveBoxSet;
-	BuildRuntimeBoxAliases(activeLiveBoxes, activeLiveBoxSet);
 }
 
 void BuildReversePathfindingEdges()
@@ -2290,7 +2282,9 @@ void RecomputeRuntimeZones()
 	if ((int)s_boxNativeState.size() != boxCount)
 		BuildPathfindingFlipMetadata();
 
-	BuildRuntimeBoxState();
+	std::vector<int> activeBoxes;
+	s_runtimeActiveBoxes = BuildActiveBoxSet(activeBoxes);
+	BuildRuntimeBoxAliases(activeBoxes, s_runtimeActiveBoxes);
 	BuildReversePathfindingEdges();
 
 	std::vector<int> stack;
@@ -3096,9 +3090,8 @@ void FindAITargetObject(CreatureInfo* creature, int objectNumber, int ocb, bool 
 int TargetReachable(ItemInfo* item, ItemInfo* enemy)
 {
 	const auto& creature = *GetCreatureInfo(item);
-	auto& room = g_Level.Rooms[enemy->RoomNumber];
-	auto* floor = GetSector(&room, enemy->Pose.Position.x - room.Position.x, enemy->Pose.Position.z - room.Position.z);
-	int floorBox = floor->PathfindingBoxID;
+	auto pointColl = GetPointCollision(enemy->Pose.Position, enemy->RoomNumber);
+	int floorBox = pointColl.GetSector().PathfindingBoxID;
 	int resolvedFloorBox = ResolveRuntimeBox(floorBox);
 
 	// NEW: Only update enemy box number if it is actually reachable by the enemy.
@@ -3120,11 +3113,8 @@ int TargetReachable(ItemInfo* item, ItemInfo* enemy)
 	}
 	else
 	{
-		auto pointColl = GetPointCollision(enemy->Pose.Position, floor->RoomNumber);
 		auto bounds = GameBoundingBox(item);
 		isReachable = abs(enemy->Pose.Position.y - pointColl.GetFloorHeight()) < bounds.GetHeight();
-		floorBox = pointColl.GetSector().PathfindingBoxID;
-		resolvedFloorBox = ResolveRuntimeBox(floorBox);
 
 		if (creature.LOT.Zone == ZoneType::Amphibious && isEnemyInWater)
 		{
