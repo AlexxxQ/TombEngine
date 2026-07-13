@@ -2284,7 +2284,6 @@ void RecomputeRuntimeZones()
 	std::vector<int> activeBoxes;
 	s_runtimeActiveBoxes = BuildActiveBoxSet(activeBoxes);
 	BuildRuntimeBoxAliases(activeBoxes, s_runtimeActiveBoxes);
-	BuildReversePathfindingEdges();
 
 	std::vector<int> stack;
 	for (int zoneType = 0; zoneType < (int)ZoneType::MaxZone; zoneType++)
@@ -4062,6 +4061,7 @@ void InitializeItemBoxData()
 	// Build per-box flip metadata and compute the runtime zone table for the current
 	// (load-time, unflipped) flip combination. Recomputed on every DoFlipMap.
 	BuildPathfindingFlipMetadata();
+	BuildReversePathfindingEdges();
 	RecomputeRuntimeZones();
 }
 
