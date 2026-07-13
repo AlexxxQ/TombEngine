@@ -2037,7 +2037,7 @@ const std::vector<int>& GetRuntimeZoneTable(int zoneType)
 // geometry/boxes of the unflipped room are read from its alternate. Pointing every portal at
 // the base slot makes it always resolve to the active variant -- correct in base, global-flip
 // and mixed-flip states alike. Done once at load (idempotent: base rooms are never alt targets).
-void RemapAlternateRoomPortals()
+static void RemapAlternateRoomPortals()
 {
 	int n = (int)g_Level.Rooms.size();
 	std::vector<int> altToBase(n, NO_VALUE);
@@ -2071,7 +2071,7 @@ void RemapAlternateRoomPortals()
 	}
 }
 
-void BuildPathfindingFlipMetadata()
+static void BuildPathfindingFlipMetadata()
 {
 	int boxCount = (int)g_Level.PathfindingBoxes.size();
 	s_boxFlipGroup.assign(boxCount, NO_VALUE);
@@ -2244,7 +2244,7 @@ static void BuildRuntimeBoxAliases(const std::vector<int>& activeBoxes, const st
 	}
 }
 
-void BuildReversePathfindingEdges()
+static void BuildReversePathfindingEdges()
 {
 	int boxCount = (int)g_Level.PathfindingBoxes.size();
 	s_reverseEdges.assign(boxCount, {});

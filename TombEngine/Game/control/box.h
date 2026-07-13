@@ -187,7 +187,6 @@ void InitializeItemBoxData();
 // alternated room has no zone in the opposite snapshot, so cross-group pathfinding breaks. These
 // rebuild a zone table for the ACTUAL current flip combination from the live box/overlap data and
 // each room's real flip state, and are recomputed at load and on every DoFlipMap.
-void BuildPathfindingFlipMetadata();
 void RecomputeRuntimeZones();
 const std::vector<int>& GetRuntimeZoneTable(int zoneType);
 
