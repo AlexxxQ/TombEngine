@@ -2278,8 +2278,6 @@ void BuildReversePathfindingEdges()
 void RecomputeRuntimeZones()
 {
 	int boxCount = (int)g_Level.PathfindingBoxes.size();
-	if ((int)s_boxNativeState.size() != boxCount)
-		BuildPathfindingFlipMetadata();
 
 	std::vector<int> activeBoxes;
 	s_runtimeActiveBoxes = BuildActiveBoxSet(activeBoxes);
