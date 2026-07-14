@@ -727,12 +727,11 @@ static bool CanBypassRouteExitBlocker(int x, int z, int boxHeight, int nextHeigh
 		return false;
 
 	int routeFlags = 0;
-	bool routeExitFloorHint =
+	bool activeRouteEdge =
 		TryGetCompiledOverlapFlags(routeFrom, nextBox, routeFlags) &&
-		OverlapActiveForEdge(routeFrom, routeFlags) &&
-		(routeFlags & OVERLAP_ROUTE_EXIT_FLOOR_HINT) != 0;
+		OverlapActiveForEdge(routeFrom, routeFlags);
 
-	if (!routeExitFloorHint || !PointInsideBoxXZ(x, z, nextBox))
+	if (!activeRouteEdge || !PointInsideBoxXZ(x, z, nextBox))
 		return false;
 
 	return true;
@@ -1298,7 +1297,22 @@ bool CreaturePathfind(ItemInfo* item, Vector3i prevPos, short angle, short tilt)
 		item->Pose.Orientation.x = 0;
 	}
 
-	UpdateItemRoom(item->Index);
+	int routeExitBox = (currentBox >= 0 && currentBox < (int)LOT->Node.size()) ?
+		LOT->Node[currentBox].exitBox : NO_VALUE;
+	bool useRouteExitRoom =
+		!Objects[item->ObjectNumber].nonLot &&
+		LOT->Zone != ZoneType::Water &&
+		LOT->Fly == NO_FLYING &&
+		!LOT->IsJumping &&
+		floor != nullptr &&
+		floor->PathfindingBoxID == routeExitBox &&
+		routeExitBox != currentBox &&
+		roomNumber != item->RoomNumber;
+
+	if (useRouteExitRoom)
+		ItemNewRoom(item->Index, roomNumber);
+	else
+		UpdateItemRoom(item->Index);
 
 	return true;
 }
