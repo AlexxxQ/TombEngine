@@ -2331,7 +2331,7 @@ void RecomputeRuntimeZones()
 						return;
 					if (nb == cur)
 						return;
-					if (!IsBoxUsableNow(cur) || !IsBoxUsableNow(nb) || !OverlapActiveForEdge(cur, ovf))
+					if (!IsBoxUsableNow(nb) || !OverlapActiveForEdge(cur, ovf))
 						return;
 
 					bool canJump   = (ovf & OVERLAP_JUMP) != 0;
@@ -2380,7 +2380,7 @@ void RecomputeRuntimeZones()
 
 				// Compiled overlaps.
 				int index = g_Level.PathfindingBoxes[cur].overlapIndex;
-				if (index >= 0 && IsBoxUsableNow(cur))
+				if (index >= 0)
 				{
 					bool last = false;
 					while (!last && index < (int)g_Level.Overlaps.size())
