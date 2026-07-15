@@ -2260,28 +2260,17 @@ static void BuildReversePathfindingEdges()
 	int boxCount = (int)g_Level.PathfindingBoxes.size();
 	s_reverseEdges.assign(boxCount, {});
 
-	auto addReverseEdge = [&](int fromBox, int toBox, int flags)
-	{
-		if (fromBox < 0 || fromBox >= boxCount || toBox < 0 || toBox >= boxCount)
-			return;
-		if (fromBox == toBox)
-			return;
-
-		s_reverseEdges[toBox].push_back({ fromBox, flags });
-	};
-
 	for (int fromBox = 0; fromBox < boxCount; fromBox++)
 	{
 		int index = g_Level.PathfindingBoxes[fromBox].overlapIndex;
-		if (index >= 0)
+		while (index >= 0 && index < (int)g_Level.Overlaps.size())
 		{
-			bool last = false;
-			while (!last && index < (int)g_Level.Overlaps.size())
-			{
-				const auto& overlap = g_Level.Overlaps[index++];
-				last = (overlap.flags & OVERLAP_END_BIT) != 0;
-				addReverseEdge(fromBox, overlap.box, overlap.flags);
-			}
+			const auto& overlap = g_Level.Overlaps[index++];
+			if (overlap.box >= 0 && overlap.box < boxCount && overlap.box != fromBox)
+				s_reverseEdges[overlap.box].push_back({ fromBox, overlap.flags });
+
+			if (overlap.flags & OVERLAP_END_BIT)
+				break;
 		}
 	}
 }
@@ -2325,8 +2314,6 @@ void RecomputeRuntimeZones()
 				auto processNeighbor = [&](int nb, int ovf)
 				{
 					if (nb < 0 || nb >= boxCount || zones[nb] != 0)
-						return;
-					if (nb == cur)
 						return;
 					if (!IsBoxUsableNow(nb) || !OverlapActiveForEdge(cur, ovf))
 						return;
