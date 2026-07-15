@@ -2124,11 +2124,8 @@ static bool IsBoxActiveNow(int box)
 
 static bool IsBoxUsableNow(int box)
 {
-	if (box < 0 || box >= (int)s_boxNativeState.size())
-		return false;
-
-	return s_runtimeActiveBoxes.empty() ||
-		(box < (int)s_runtimeActiveBoxes.size() && s_runtimeActiveBoxes[box] != 0);
+	return box >= 0 && box < (int)s_runtimeActiveBoxes.size() &&
+		s_runtimeActiveBoxes[box] != 0;
 }
 
 // Cross-group entries carry their exact compiler room groups and state mask. Legacy entries
