@@ -151,6 +151,10 @@ struct CreatureInfo
 	ItemInfo*	 AITarget		= nullptr;
 	int			 AITargetNumber	= NO_VALUE;
 	Vector3i	 Target			= Vector3i::Zero;
+	Vector3i	 LastValidPathPosition = Vector3i::Zero;
+	int			 LastValidPathFloor = 0;
+	int			 LastValidPathBox = NO_VALUE;
+	short		 LastValidPathRoom = NO_VALUE;
 
 	MoodType Mood = MoodType::Bored;
 	std::optional<MoodType> ForcedMood = std::nullopt;

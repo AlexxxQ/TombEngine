@@ -74,6 +74,7 @@ static bool IsBoxUsableNow(int box);
 static bool OverlapActiveForEdge(int fromBox, int overlapFlags);
 static int ResolveRuntimeBox(int box);
 static bool TryGetCompiledOverlapFlags(int fromBox, int toBox, int& flags);
+static int GetBoxOverlapAreaXZ(int a, int b);
 static bool TryResolveRouteExitFloorAtVerticalPortal(ItemInfo* item, LOTInfo* LOT, Vector3i prevPos, const int* zone,
 	int currentBox, int boxHeight, FloorInfo*& floor, int& floorBox, short& roomNumber, int& height);
 
@@ -789,17 +790,26 @@ static bool TryResolveRouteExitFloorAtVerticalPortal(ItemInfo* item, LOTInfo* LO
 		int rawBx = f->PathfindingBoxID;
 		int surfaceHeight = GetFloorHeight(f, probeX, probeY, probeZ);
 		int stepUp = prevPos.y - surfaceHeight;
+		int equivalentFlags = 0;
+		bool matchesExitSurface = rawBx == exitBox ||
+			(rawBx >= 0 && rawBx < boxCount &&
+			 IsBoxUsableNow(rawBx) &&
+			 zone[rawBx] != 0 && zone[rawBx] == zone[exitBox] &&
+			 g_Level.PathfindingBoxes[rawBx].height == exit.height &&
+			 PointInsideBoxXZ(probeX, probeZ, rawBx) &&
+			 TryGetCompiledOverlapFlags(rawBx, exitBox, equivalentFlags) &&
+			 OverlapActiveForEdge(rawBx, equivalentFlags));
 
-		if (rawBx != exitBox)
+		if (!matchesExitSurface)
 			return false;
 
-		if (stepUp <= 0 || stepUp > LOT->Step)
+		if (stepUp < 0 || stepUp > LOT->Step)
 			return false;
 
 		floor = f;
-		floorBox = rawBx;
+		floorBox = exitBox;
 		roomNumber = rn;
-		height = g_Level.PathfindingBoxes[rawBx].height;
+		height = exit.height;
 		return true;
 	};
 
@@ -2183,10 +2193,6 @@ static bool TryGetCompiledOverlapFlags(int fromBox, int toBox, int& flags)
 
 static int GetBoxOverlapAreaXZ(int a, int b)
 {
-	int boxCount = (int)g_Level.PathfindingBoxes.size();
-	if (a < 0 || a >= boxCount || b < 0 || b >= boxCount)
-		return 0;
-
 	auto& A = g_Level.PathfindingBoxes[a];
 	auto& B = g_Level.PathfindingBoxes[b];
 	int xOverlap = std::min((int)A.bottom, (int)B.bottom) - std::max((int)A.top, (int)B.top);
@@ -2240,9 +2246,6 @@ static void BuildRuntimeBoxAliases(const std::vector<int>& activeBoxes, const st
 		for (int activeBox : activeBoxes)
 		{
 			int area = GetBoxOverlapAreaXZ(overlayBox, activeBox);
-			if (area <= 0)
-				continue;
-
 			if (area > bestArea)
 			{
 				bestBox = activeBox;
@@ -2896,7 +2899,11 @@ int CreatureVault(short itemNumber, short angle, int vault, int shift)
 	item->Pose.Position.y = y;
 	item->Floor = y;
 
-	if (roomNumber != item->RoomNumber)
+	// ItemNewRoom() is deferred during the control loop. CreatureAnimation() may
+	// have queued an adjacent room before this vault rollback restored the pose,
+	// while item->RoomNumber still reports the original room. Queue the original
+	// room last so the rollback also wins when deferred room moves are applied.
+	if (roomNumber != item->RoomNumber || InItemControlLoop)
 		ItemNewRoom(itemNumber, roomNumber);
 
 	return vault;
@@ -3179,6 +3186,32 @@ void CreatureAIInfo(ItemInfo* item, AI_INFO* AI)
 	// active floor box, so resolve through collision and fall back to the bottom sector if needed.
 	item->BoxNumber = ResolveCreatureCurrentBox(item);
 	AI->zoneNumber = (item->BoxNumber != NO_VALUE) ? zone[item->BoxNumber] : NO_VALUE;
+
+	bool groundCreature = creature->LOT.Zone != ZoneType::Water &&
+		creature->LOT.Fly == NO_FLYING && !creature->LOT.IsJumping;
+	bool validCurrentBox = item->BoxNumber != NO_VALUE &&
+		IsBoxUsableNow(item->BoxNumber) && AI->zoneNumber > 0;
+	int fallbackBox = ResolveRuntimeBox(creature->LastValidPathBox);
+	bool validFallback = fallbackBox != NO_VALUE && IsBoxUsableNow(fallbackBox) && zone[fallbackBox] > 0;
+
+	if (groundCreature && !validCurrentBox && validFallback)
+	{
+		item->Pose.Position = creature->LastValidPathPosition;
+		item->Floor = creature->LastValidPathFloor;
+		item->BoxNumber = fallbackBox;
+		AI->zoneNumber = zone[fallbackBox];
+		if (item->RoomNumber != creature->LastValidPathRoom || InItemControlLoop)
+			ItemNewRoom(item->Index, creature->LastValidPathRoom);
+		validCurrentBox = true;
+	}
+
+	if (groundCreature && validCurrentBox)
+	{
+		creature->LastValidPathPosition = item->Pose.Position;
+		creature->LastValidPathFloor = item->Floor;
+		creature->LastValidPathBox = item->BoxNumber;
+		creature->LastValidPathRoom = item->RoomNumber;
+	}
 
 	// Friendly creature with no valid target: skip AI computation.
 	if (enemy == nullptr)
