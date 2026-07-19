@@ -183,8 +183,7 @@ static void DrawBox(int boxIndex, const Vector3& color)
 
 void DrawLaraPathfinding(int boxIndex)
 {
-	boxIndex = ResolveRuntimeBox(boxIndex);
-	if (boxIndex <= NO_VALUE || boxIndex >= g_Level.PathfindingBoxes.size())
+	if (boxIndex <= NO_VALUE || boxIndex >= g_Level.PathfindingBoxes.size() || !IsBoxUsableNow(boxIndex))
 		return;
 
 	auto& currBox = g_Level.PathfindingBoxes[boxIndex];
@@ -196,9 +195,6 @@ void DrawLaraPathfinding(int boxIndex)
 		currentBoxColor = (currBox.flags & BLOCKED) ? Vector3(1.0f, 0.0f, 0.0f) : Vector3(0.0f, 1.0f, 0.0f);
 
 	DrawBox(boxIndex, currentBoxColor);
-
-	if (!IsBoxUsableNow(boxIndex))
-		return;
 
 	// FLIPMAP-AWARE OVERLAP FILTER.
 	//
@@ -214,7 +210,7 @@ void DrawLaraPathfinding(int boxIndex)
 
 		auto overlap = g_Level.Overlaps[index];
 
-		int overlapBox = ResolveRuntimeBox(overlap.box);
+		int overlapBox = overlap.box;
 		if (IsBoxUsableNow(overlapBox) && OverlapActiveForEdge(boxIndex, overlap.flags))
 			DrawBox(overlapBox, Vector3(1, 1, 0));
 
@@ -241,9 +237,9 @@ void DrawItemPathfinding(int itemNumber)
 
 	auto* creature = GetCreatureInfo(&item);
 	const auto& LOT = creature->LOT;
-	int itemBox = ResolveRuntimeBox(item.BoxNumber);
-	int targetBox = ResolveRuntimeBox(LOT.TargetBox);
-	int requiredBox = ResolveRuntimeBox(LOT.RequiredBox);
+	int itemBox = IsBoxUsableNow(item.BoxNumber) ? item.BoxNumber : NO_VALUE;
+	int targetBox = IsBoxUsableNow(LOT.TargetBox) ? LOT.TargetBox : NO_VALUE;
+	int requiredBox = IsBoxUsableNow(LOT.RequiredBox) ? LOT.RequiredBox : NO_VALUE;
 
 	// Green box: current box (where creature is).
 	if (itemBox != NO_VALUE)
