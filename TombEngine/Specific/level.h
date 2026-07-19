@@ -23,6 +23,26 @@ struct SinkInfo;
 struct BOX_INFO;
 struct OVERLAP;
 
+struct PathfindingBoxCondition
+{
+	int  FlipGroup = 0;
+	bool Flipped = false;
+};
+
+struct PathfindingBoxCase
+{
+	int Box = -1;
+	std::vector<PathfindingBoxCondition> Conditions = {};
+};
+
+struct PathfindingSectorBoxVariants
+{
+	int RoomNumber = -1;
+	int SectorIndex = -1;
+	int DefaultBox = -1;
+	std::vector<PathfindingBoxCase> Cases = {};
+};
+
 struct TEXTURE
 {
 	int width;
@@ -127,6 +147,7 @@ struct LevelData
 
 	std::vector<BOX_INFO> PathfindingBoxes				   = {};
 	std::vector<OVERLAP>  Overlaps						   = {};
+	std::vector<PathfindingSectorBoxVariants> SectorBoxVariants = {};
 	std::vector<int>	  Zones[(int)ZoneType::MaxZone][2] = {};
 
 	// Sound

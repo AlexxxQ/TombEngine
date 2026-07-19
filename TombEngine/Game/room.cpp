@@ -705,25 +705,11 @@ void DoFlipMap(int group)
 		auto* creature = GetCreatureInfo(&item);
 		auto& lot = creature->LOT;
 
-		lot.TargetBox   = NO_VALUE;
-		lot.RequiredBox = NO_VALUE;
-		lot.Head        = NO_VALUE;
-		lot.Tail        = NO_VALUE;
-
-		for (auto& node : lot.Node)
-		{
-			node.exitBox       = NO_VALUE;
-			node.searchNumber  = 0;
-			node.nextExpansion = NO_VALUE;
-			node.cost          = FLT_MAX;
-		}
-
-		// Refresh the creature's current box from its position. The sector under the
-		// creature may now belong to a different (alt-side) box.
-		auto* room = &g_Level.Rooms[item.RoomNumber];
-		item.BoxNumber = GetSector(room,
-			item.Pose.Position.x - room->Position.x,
-			item.Pose.Position.z - room->Position.z)->PathfindingBoxID;
+		// Rebuild the creature's reachable node list from the new runtime zones.
+		// Clearing only exitBox/search fields leaves stale zone membership after
+		// rapid successive flipmap changes.
+		RefreshCreatureRuntimeZone(&item);
+		ClearLOT(&lot);
 	}
 }
 

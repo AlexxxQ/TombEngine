@@ -189,6 +189,7 @@ void InitializeItemBoxData();
 // each room's real flip state, and are recomputed at load and on every DoFlipMap.
 void RecomputeRuntimeZones();
 const std::vector<int>& GetRuntimeZoneTable(int zoneType);
+void RefreshCreatureRuntimeZone(ItemInfo* item);
 
 bool CanCreatureJump(ItemInfo& item, JumpDistance jumpDistType);
 

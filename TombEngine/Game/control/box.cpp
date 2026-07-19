@@ -298,7 +298,6 @@ void DrawItemPathfinding(int itemNumber)
 		int nextBox = LOT.Node[currentBox].exitBox;
 		auto& box = g_Level.PathfindingBoxes[currentBox];
 		auto& center = GetBoxCenter(currentBox);
-		center.y = std::min(center.y, target.y);
 
 		bool blink = blinkingBox != NO_VALUE;
 		auto color = blink ? Vector4(1, 0, 0, 1) : Vector4::One;
@@ -348,7 +347,6 @@ void DrawItemPathfinding(int itemNumber)
 				// Creature line.
 				lineStart = source;
 				lineEnd = GetBoxCenter(nextBox);
-				lineEnd.y = std::min(lineEnd.y, target.y);
 			}
 		}
 
@@ -877,7 +875,9 @@ bool CreaturePathfind(ItemInfo* item, Vector3i prevPos, short angle, short tilt)
 		return false;
 
 	int rawFloorBox = floor->PathfindingBoxID;
-	int floorBox = ResolveRuntimeBox(rawFloorBox);
+	int floorBox = rawFloorBox;
+	if (LOT->Zone == ZoneType::Water || LOT->Fly != NO_FLYING)
+		floorBox = ResolveRuntimeBox(rawFloorBox);
 	int height = g_Level.PathfindingBoxes[floorBox].height;
 
 	// PORTAL-Y RETRY (movement, active-guarded): at a vertical portal the head-Y floor probe
@@ -2278,9 +2278,60 @@ static void BuildReversePathfindingEdges()
 	}
 }
 
+static void ApplyCompiledSectorBoxVariants()
+{
+	int boxCount = (int)g_Level.PathfindingBoxes.size();
+	std::vector<int> roomSlots(g_Level.Rooms.size(), NO_VALUE);
+	for (int roomNumber = 0; roomNumber < (int)g_Level.Rooms.size(); roomNumber++)
+	{
+		int originalRoom = g_Level.Rooms[roomNumber].originalRoom;
+		if (originalRoom >= 0 && originalRoom < (int)roomSlots.size())
+			roomSlots[originalRoom] = roomNumber;
+	}
+
+	for (const auto& variants : g_Level.SectorBoxVariants)
+	{
+		if (variants.RoomNumber < 0 || variants.RoomNumber >= (int)roomSlots.size())
+			continue;
+
+		int roomNumber = roomSlots[variants.RoomNumber];
+		if (roomNumber == NO_VALUE)
+			continue;
+
+		auto& room = g_Level.Rooms[roomNumber];
+		if (variants.SectorIndex < 0 || variants.SectorIndex >= (int)room.Sectors.size())
+			continue;
+
+		int selectedBox = variants.DefaultBox;
+		for (const auto& boxCase : variants.Cases)
+		{
+			bool matches = true;
+			for (const auto& condition : boxCase.Conditions)
+			{
+				if (condition.FlipGroup < 0 || condition.FlipGroup >= MAX_FLIPMAP ||
+					(bool)FlipStats[condition.FlipGroup] != condition.Flipped)
+				{
+					matches = false;
+					break;
+				}
+			}
+
+			if (matches)
+			{
+				selectedBox = boxCase.Box;
+				break;
+			}
+		}
+
+		room.Sectors[variants.SectorIndex].PathfindingBoxID =
+			(selectedBox >= 0 && selectedBox < boxCount) ? selectedBox : NO_VALUE;
+	}
+}
+
 void RecomputeRuntimeZones()
 {
 	int boxCount = (int)g_Level.PathfindingBoxes.size();
+	ApplyCompiledSectorBoxVariants();
 
 	std::vector<int> activeBoxes;
 	s_runtimeActiveBoxes = BuildActiveBoxSet(activeBoxes);
@@ -2384,6 +2435,46 @@ void RecomputeRuntimeZones()
 		}
 	}
 
+}
+
+void RefreshCreatureRuntimeZone(ItemInfo* item)
+{
+	if (item == nullptr || !item->IsCreature())
+		return;
+
+	auto* creature = GetCreatureInfo(item);
+	auto& lot = creature->LOT;
+	int resolvedBox = ResolveCreatureCurrentBox(item);
+	if (resolvedBox == NO_VALUE || !IsBoxUsableNow(resolvedBox))
+	{
+		int fallbackBox = creature->LastValidPathBox;
+		if (IsBoxUsableNow(fallbackBox))
+			resolvedBox = fallbackBox;
+	}
+	if ((resolvedBox == NO_VALUE || !IsBoxUsableNow(resolvedBox)) &&
+		IsBoxUsableNow(item->BoxNumber))
+	{
+		resolvedBox = item->BoxNumber;
+	}
+	item->BoxNumber = resolvedBox;
+	lot.ZoneCount = 0;
+
+	if (item->BoxNumber == NO_VALUE ||
+		item->BoxNumber < 0 || item->BoxNumber >= (int)s_runtimeZones[(int)lot.Zone].size())
+		return;
+
+	const auto& zones = s_runtimeZones[(int)lot.Zone];
+	int currentZone = zones[item->BoxNumber];
+	if (lot.Fly == NO_FLYING && currentZone <= 0)
+		return;
+
+	for (int box = 0; box < (int)g_Level.PathfindingBoxes.size() && lot.ZoneCount < (int)lot.Node.size(); box++)
+	{
+		if (lot.Fly == NO_FLYING && zones[box] != currentZone)
+			continue;
+
+		lot.Node[lot.ZoneCount++].boxNumber = box;
+	}
 }
 
 bool CanExpandToBox(LOTInfo* LOT, int fromBox, int toBox, int overlapFlags, int searchZone, const std::vector<int>& zone)
@@ -3093,7 +3184,7 @@ int TargetReachable(ItemInfo* item, ItemInfo* enemy)
 	const auto& creature = *GetCreatureInfo(item);
 	auto pointColl = GetPointCollision(enemy->Pose.Position, enemy->RoomNumber);
 	int floorBox = pointColl.GetSector().PathfindingBoxID;
-	int resolvedFloorBox = ResolveRuntimeBox(floorBox);
+	int resolvedFloorBox = (floorBox != NO_VALUE && IsBoxUsableNow(floorBox)) ? floorBox : NO_VALUE;
 
 	// NEW: Only update enemy box number if it is actually reachable by the enemy.
 	// This prevents enemies from running to the player and attacking nothing when they are hanging or shimmying. -- Lwmte, 27.06.22
@@ -3191,7 +3282,7 @@ void CreatureAIInfo(ItemInfo* item, AI_INFO* AI)
 		creature->LOT.Fly == NO_FLYING && !creature->LOT.IsJumping;
 	bool validCurrentBox = item->BoxNumber != NO_VALUE &&
 		IsBoxUsableNow(item->BoxNumber) && AI->zoneNumber > 0;
-	int fallbackBox = ResolveRuntimeBox(creature->LastValidPathBox);
+	int fallbackBox = creature->LastValidPathBox;
 	bool validFallback = fallbackBox != NO_VALUE && IsBoxUsableNow(fallbackBox) && zone[fallbackBox] > 0;
 
 	if (groundCreature && !validCurrentBox && validFallback)

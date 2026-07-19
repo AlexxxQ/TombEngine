@@ -1245,6 +1245,7 @@ void FreeLevel(bool partial)
 	g_Level.Meshes.resize(0);
 	g_Level.PathfindingBoxes.resize(0);
 	g_Level.Overlaps.resize(0);
+	g_Level.SectorBoxVariants.resize(0);
 	g_Level.Sprites.resize(0);
 	g_Level.Mirrors.resize(0);
 	g_Level.SoundDetails.resize(0);
@@ -1745,6 +1746,8 @@ void LoadSamples()
 
 void LoadBoxes()
 {
+	constexpr int SECTOR_BOX_VARIANTS_MAGIC = 0x31564253; // "SBV1"
+
 	// Read boxes
 	int boxCount = ReadCount(CUBE(1024));
 	TENLog("Box count: " + std::to_string(boxCount), LogLevel::Info);
@@ -1778,6 +1781,44 @@ void LoadBoxes()
 				ReadBytes(g_Level.Zones[j][i].data(), boxCount * sizeof(int));
 			}
 		}
+	}
+
+	int variantMarker = ReadInt32();
+	if (variantMarker == SECTOR_BOX_VARIANTS_MAGIC)
+	{
+		int variantSetCount = ReadCount(CUBE(1024));
+		TENLog("Sector box variant set count: " + std::to_string(variantSetCount), LogLevel::Info);
+		g_Level.SectorBoxVariants.reserve(variantSetCount);
+
+		for (int i = 0; i < variantSetCount; i++)
+		{
+			auto& variants = g_Level.SectorBoxVariants.emplace_back();
+			variants.RoomNumber = ReadInt32();
+			variants.SectorIndex = ReadInt32();
+			variants.DefaultBox = ReadInt32();
+
+			int caseCount = ReadCount(1024);
+			variants.Cases.reserve(caseCount);
+			for (int j = 0; j < caseCount; j++)
+			{
+				auto& boxCase = variants.Cases.emplace_back();
+				boxCase.Box = ReadInt32();
+
+				int conditionCount = ReadCount(MAX_FLIPMAP);
+				boxCase.Conditions.reserve(conditionCount);
+				for (int k = 0; k < conditionCount; k++)
+				{
+					auto& condition = boxCase.Conditions.emplace_back();
+					condition.FlipGroup = ReadInt32();
+					condition.Flipped = ReadBool();
+				}
+			}
+		}
+	}
+	else
+	{
+		// Older level: the value belongs to the following mirror block.
+		CurrentDataPtr -= sizeof(int);
 	}
 
 	// By default all blockable boxes are blocked
