@@ -1020,9 +1020,7 @@ bool UpdateItemRoom(short itemNumber)
 	auto* item = &g_Level.Items[itemNumber];
 	auto bounds = GameBoundingBox(item);
 
-	// Small creatures can stand on thin ceiling slabs above vertical portals.
-	// Their bbox center may resolve to the room below, while the top of the body
-	// stays in the slab's real room.
+	// A thin-slab creature's center may resolve below while its top stays in the slab room.
 	int yOffset = (-bounds.Y1 < CLICK(2)) ? bounds.Y1 : (int)bounds.GetCenter().y;
 
 	auto roomNumber = GetPointCollision(

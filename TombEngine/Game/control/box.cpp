@@ -196,10 +196,7 @@ void DrawLaraPathfinding(int boxIndex)
 	if (!IsBoxUsableNow(boxIndex))
 		return;
 
-	// FLIPMAP-AWARE OVERLAP FILTER.
-	//
-	// Mirror the runtime BFS filter (CanExpandToBox) so the visualization shows exactly
-	// which neighbours are active for the current independent flip-group combination.
+	// Show only overlaps active for the current flip-group combination.
 
 	// Draw overlapping boxes.
 	while (index >= 0)
@@ -873,13 +870,8 @@ bool CreaturePathfind(ItemInfo* item, Vector3i prevPos, short angle, short tilt)
 	int floorBox = rawFloorBox;
 	int height = g_Level.PathfindingBoxes[floorBox].height;
 
-	// PORTAL-Y RETRY (movement, active-guarded): at a vertical portal the head-Y floor probe
-	// can land on the wrong box -- a far phantom box, or a box that is INACTIVE in the current
-	// flip combination (e.g. a base box when the creature's own room is flipped). Scan probe Y
-	// across the full Drop..Step vertical range and adopt the first box that is within Step/Drop
-	// AND ACTIVE (runtime zone != 0). The active guard is what makes this safe across
-	// independent flip groups: it never locks the creature onto an inactive box, while still
-	// stabilising the floor/box at the seam so the route isn't dropped mid-climb. Ground only.
+	// A vertical-portal head probe may hit an inactive or phantom box.
+	// Ground creatures retry within Drop..Step and accept only an active box.
 	if (LOT->Zone != ZoneType::Water && LOT->Fly == NO_FLYING && item->BoxNumber != NO_VALUE)
 	{
 		int fb = floorBox;
@@ -1731,15 +1723,8 @@ bool BadFloor(int x, int y, int z, int boxHeight, int nextHeight, short roomNumb
 		item, currentBox, floorBox, nextBox, rawBox))
 		heightResult = false;
 
-	// PORTAL-Y RETRY: GetFloor only traverses a floor portal when the probe Y is at-or-below
-	// the portal's Y. For a TALL creature whose head Y lands ABOVE the destination's portal,
-	// the first probe stays in the creature's own room and returns its deep fallback floor
-	// (a phantom box with a huge height), causing a SPURIOUS rejection at vertical-portal
-	// edges -- e.g. stepping into a stacked / flip-adjacent room. Scan probe Y across the
-	// full Drop..Step vertical range; if any probe lands on a floor within
-	// Step/Drop it's a legitimate step and we clear the rejection. For real cliffs every
-	// probe returns the same far floor and the rejection stands. Ground creatures only
-	// (swimmers/flyers have BLOCK-sized Step/Drop that would wrongly clear everything).
+	// A tall ground creature may probe above a floor portal and see a fallback floor.
+	// Retry within Drop..Step; real cliffs remain invalid for every sample.
 	if (heightResult && LOT->Zone != ZoneType::Water && LOT->Fly == NO_FLYING)
 	{
 		auto tryProbe = [&](int probeY) -> bool
@@ -1792,10 +1777,7 @@ int CreatureCreature(short itemNumber)
 			int xDistance = abs(linked->Pose.Position.x - x);
 			int zDistance = abs(linked->Pose.Position.z - z);
 			
-			// Octagonal distance approximation (no sqrt): larger axis full, smaller halved.
-			// The else branch previously duplicated the xDistance form, under-reporting
-			// distance along Z (avoidance triggered too late when creatures were separated
-			// mostly on Z).
+			// Octagonal distance: full larger axis plus half the smaller axis.
 			if (xDistance > zDistance)
 				distance = xDistance + (zDistance >> 1);
 			else
@@ -1982,11 +1964,7 @@ bool SearchLOT(LOTInfo* LOT, int depth)
 	return SearchLOT_DijkstraAStar(LOT, depth, mode);
 }
 
-// ============================================================================
-// RUNTIME PER-COMBINATION ZONE RE-FLOOD
-// ============================================================================
-// Zones are derived from active sector box IDs and exact overlap state masks for the
-// current independent flip-group combination. Recomputed at load and on every DoFlipMap.
+// Runtime zones derived from active boxes and exact overlap state masks.
 
 static std::vector<int>         s_runtimeZones[(int)ZoneType::MaxZone];
 static std::vector<char>        s_runtimeActiveBoxes; // boxes present in currently active room-sector data
@@ -2338,18 +2316,14 @@ bool CanExpandToBox(LOTInfo* LOT, int fromBox, int toBox, int overlapFlags, int 
 	auto& head = g_Level.PathfindingBoxes[fromBox];
 	auto& candidate = g_Level.PathfindingBoxes[toBox];
 
-	// SearchLOT expands BACKWARDS from the target. If we visit 'toBox' from 'fromBox',
-	// we will set Node[toBox].exitBox = fromBox, meaning the creature must later move
-	// FORWARD from toBox -> fromBox. Therefore all directional traversal checks below
-	// validate the forward edge toBox -> fromBox. The search loops feed us exactly
-	// that forward edge from s_reverseEdges[fromBox].
+	// Backward search assigns toBox -> fromBox as the forward route exit.
+	// Validate directional flags for that forward edge.
 	int forwardFlags = overlapFlags;
 	int delta = head.height - candidate.height;
 	bool amphibiousTraversal = LOT->Zone == ZoneType::Amphibious &&
 		(forwardFlags & OVERLAP_AMPHIBIOUS_TRAVERSABLE);
 
-	// Both boxes must belong to active sectors, and a flip-dependent overlap must match the
-	// exact current source/target group state encoded by the compiler.
+	// Both boxes and the compiler-encoded overlap state must be active.
 	if (!IsBoxUsableNow(fromBox) || !IsBoxUsableNow(toBox) || !OverlapActiveForEdge(forwardFlags))
 		return false;
 
@@ -2844,10 +2818,7 @@ int CreatureVault(short itemNumber, short angle, int vault, int shift)
 	item->Pose.Position.y = y;
 	item->Floor = y;
 
-	// ItemNewRoom() is deferred during the control loop. CreatureAnimation() may
-	// have queued an adjacent room before this vault rollback restored the pose,
-	// while item->RoomNumber still reports the original room. Queue the original
-	// room last so the rollback also wins when deferred room moves are applied.
+	// Deferred room moves must apply this vault rollback last.
 	if (roomNumber != item->RoomNumber || InItemControlLoop)
 		ItemNewRoom(itemNumber, roomNumber);
 
@@ -3126,9 +3097,7 @@ void CreatureAIInfo(ItemInfo* item, AI_INFO* AI)
 
 	auto* zone = GetRuntimeZoneTable((int)creature->LOT.Zone).data();
 
-	// Update creature's current box and zone. During room transitions/climb steps, RoomNumber can
-	// briefly point at the adjacent room while the creature's feet still resolve to the previous
-	// active floor box, so resolve through collision and fall back to the bottom sector if needed.
+	// Resolve through collision because RoomNumber may lead the feet during transitions.
 	item->BoxNumber = ResolveCreatureCurrentBox(item);
 	AI->zoneNumber = (item->BoxNumber != NO_VALUE) ? zone[item->BoxNumber] : NO_VALUE;
 
@@ -4030,8 +3999,7 @@ void InitializeItemBoxData()
 			}
 		}
 	}
-	// Build the runtime zone table for the load-time flip combination.
-	// It is recomputed on every DoFlipMap.
+	// Build zones for the initial flip combination.
 	BuildReversePathfindingEdges();
 	RecomputeRuntimeZones();
 }

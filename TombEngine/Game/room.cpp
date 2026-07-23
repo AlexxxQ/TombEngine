@@ -685,29 +685,17 @@ void DoFlipMap(int group)
 	FlipStatus =
 	FlipStats[group] = !FlipStats[group];
 
-	// Rebuild the pathfinding zone table for the NEW flip combination, so a creature in a
-	// non-flipped room and a target in this (now flipped) group resolve consistent zones.
-	// Must run after FlipStats is updated and before creatures re-flood below.
+	// Rebuild zones after FlipStats changes and before creature LOT refresh.
 	RecomputeRuntimeZones();
 
-	// Invalidate every active creature's cached pathfinding flow field. The Node[]
-	// array stores exitBox / searchNumber from previous BFS runs that reflect the
-	// PRE-flip sector-to-box mapping. After a flipmap toggle, sectors point to
-	// different boxes (alt versions replace base ones), so old exitBox chains lead
-	// creatures along stale paths -- they walk into sectors whose floor heights
-	// changed and trigger HEIGHT_STEP_DROP push-back. Clearing exitBox forces the
-	// next pathfinding call to re-flood from scratch using the new flip state's
-	// zones/overlaps. This also fixes the "old red sectors briefly visible" symptom
-	// in the debug path visualization.
+	// Discard paths and zone membership built for the previous sector mapping.
 	for (auto creatureIndex : ActiveCreatures)
 	{
 		auto& item = g_Level.Items[creatureIndex];
 		auto* creature = GetCreatureInfo(&item);
 		auto& lot = creature->LOT;
 
-		// Rebuild the creature's reachable node list from the new runtime zones.
-		// Clearing only exitBox/search fields leaves stale zone membership after
-		// rapid successive flipmap changes.
+		// Refresh membership before clearing the cached flow field.
 		RefreshCreatureRuntimeZone(&item);
 		ClearLOT(&lot);
 	}

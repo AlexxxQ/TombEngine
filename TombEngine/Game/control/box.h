@@ -89,11 +89,9 @@ constexpr auto BOX_SHALLOW = 0x0400;
 constexpr auto BOX_SLOPE   = 0x0800;  // Steep floor; exported by the compiler so the runtime zone
                                       // re-flood can reproduce the land slope filter.
 
-// FLIP-STATE VALIDITY (compiler-baked, runtime BFS filter).
-// Flip-dependent edges carry exact source/target group IDs and a four-state mask.
+// Compiler-baked flip-state validity for runtime overlap filtering.
 constexpr auto OVERLAP_ROUTE_EXIT_FLOOR_HINT	= 0x0004;
-// Exact validity for an edge joining independent flip groups. The group IDs and
-// four-state mask are packed into unused flag bits, preserving OVERLAP's size.
+// Independent-group IDs and their four-state mask use spare overlap bits.
 constexpr auto OVERLAP_PAIR_STATE_MASK_SHIFT	= 3;
 constexpr auto OVERLAP_PAIR_STATE_MASK			= 0x0078;
 constexpr auto OVERLAP_PAIR_STATE_VALIDITY		= 0x0080;
@@ -172,8 +170,7 @@ void CreatureHealth(ItemInfo* item);
 void AdjustStopperFlag(ItemInfo* item, int direction);
 void InitializeItemBoxData();
 
-// Runtime zones are rebuilt from active sector box IDs and exact overlap state masks for the
-// current combination of independent flip groups. Recomputed at load and on every DoFlipMap.
+// Rebuild zones from the active boxes and overlap states.
 void RecomputeRuntimeZones();
 const std::vector<int>& GetRuntimeZoneTable(int zoneType);
 void RefreshCreatureRuntimeZone(ItemInfo* item);
