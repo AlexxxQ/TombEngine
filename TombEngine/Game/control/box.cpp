@@ -69,12 +69,9 @@ using namespace TEN::Utils;
 using PathQueue = std::priority_queue<QueueElement, std::vector<QueueElement>, std::greater<QueueElement>>;
 
 // Runtime per-combination zone re-flood helpers (defined further down, used earlier).
-static bool IsBoxActiveNow(int box);
 static bool IsBoxUsableNow(int box);
-static bool OverlapActiveForEdge(int fromBox, int overlapFlags);
-static int ResolveRuntimeBox(int box);
+static bool OverlapActiveForEdge(int overlapFlags);
 static bool TryGetCompiledOverlapFlags(int fromBox, int toBox, int& flags);
-static int GetBoxOverlapAreaXZ(int a, int b);
 static bool TryResolveRouteExitFloorAtVerticalPortal(ItemInfo* item, LOTInfo* LOT, Vector3i prevPos, const int* zone,
 	int currentBox, int boxHeight, FloorInfo*& floor, int& floorBox, short& roomNumber, int& height);
 
@@ -183,7 +180,7 @@ static void DrawBox(int boxIndex, const Vector3& color)
 
 void DrawLaraPathfinding(int boxIndex)
 {
-	if (boxIndex <= NO_VALUE || boxIndex >= g_Level.PathfindingBoxes.size() || !IsBoxUsableNow(boxIndex))
+	if (boxIndex <= NO_VALUE || boxIndex >= g_Level.PathfindingBoxes.size())
 		return;
 
 	auto& currBox = g_Level.PathfindingBoxes[boxIndex];
@@ -196,11 +193,13 @@ void DrawLaraPathfinding(int boxIndex)
 
 	DrawBox(boxIndex, currentBoxColor);
 
+	if (!IsBoxUsableNow(boxIndex))
+		return;
+
 	// FLIPMAP-AWARE OVERLAP FILTER.
 	//
 	// Mirror the runtime BFS filter (CanExpandToBox) so the visualization shows exactly
-	// which neighbours are reachable given each box's REAL room flip state (handles
-	// independent flip groups, not just the single global FlipStatus).
+	// which neighbours are active for the current independent flip-group combination.
 
 	// Draw overlapping boxes.
 	while (index >= 0)
@@ -211,7 +210,7 @@ void DrawLaraPathfinding(int boxIndex)
 		auto overlap = g_Level.Overlaps[index];
 
 		int overlapBox = overlap.box;
-		if (IsBoxUsableNow(overlapBox) && OverlapActiveForEdge(boxIndex, overlap.flags))
+		if (IsBoxUsableNow(overlapBox) && OverlapActiveForEdge(overlap.flags))
 			DrawBox(overlapBox, Vector3(1, 1, 0));
 
 		if (overlap.flags & OVERLAP_END_BIT)
@@ -237,9 +236,9 @@ void DrawItemPathfinding(int itemNumber)
 
 	auto* creature = GetCreatureInfo(&item);
 	const auto& LOT = creature->LOT;
-	int itemBox = IsBoxUsableNow(item.BoxNumber) ? item.BoxNumber : NO_VALUE;
-	int targetBox = IsBoxUsableNow(LOT.TargetBox) ? LOT.TargetBox : NO_VALUE;
-	int requiredBox = IsBoxUsableNow(LOT.RequiredBox) ? LOT.RequiredBox : NO_VALUE;
+	int itemBox = item.BoxNumber;
+	int targetBox = LOT.TargetBox;
+	int requiredBox = LOT.RequiredBox;
 
 	// Green box: current box (where creature is).
 	if (itemBox != NO_VALUE)
@@ -724,7 +723,7 @@ static bool CanBypassRouteExitBlocker(int x, int z, int boxHeight, int nextHeigh
 	int routeFlags = 0;
 	bool activeRouteEdge =
 		TryGetCompiledOverlapFlags(routeFrom, nextBox, routeFlags) &&
-		OverlapActiveForEdge(routeFrom, routeFlags);
+		OverlapActiveForEdge(routeFlags);
 
 	if (!activeRouteEdge || !PointInsideBoxXZ(x, z, nextBox))
 		return false;
@@ -762,7 +761,7 @@ static bool TryResolveRouteExitFloorAtVerticalPortal(ItemInfo* item, LOTInfo* LO
 	int routeFlags = 0;
 	bool routeExitFloorHint =
 		TryGetCompiledOverlapFlags(currentBox, exitBox, routeFlags) &&
-		OverlapActiveForEdge(currentBox, routeFlags) &&
+		OverlapActiveForEdge(routeFlags) &&
 		(routeFlags & OVERLAP_ROUTE_EXIT_FLOOR_HINT) != 0;
 
 	if (!routeExitFloorHint)
@@ -792,7 +791,7 @@ static bool TryResolveRouteExitFloorAtVerticalPortal(ItemInfo* item, LOTInfo* LO
 			 g_Level.PathfindingBoxes[rawBx].height == exit.height &&
 			 PointInsideBoxXZ(probeX, probeZ, rawBx) &&
 			 TryGetCompiledOverlapFlags(rawBx, exitBox, equivalentFlags) &&
-			 OverlapActiveForEdge(rawBx, equivalentFlags));
+			 OverlapActiveForEdge(equivalentFlags));
 
 		if (!matchesExitSurface)
 			return false;
@@ -872,8 +871,6 @@ bool CreaturePathfind(ItemInfo* item, Vector3i prevPos, short angle, short tilt)
 
 	int rawFloorBox = floor->PathfindingBoxID;
 	int floorBox = rawFloorBox;
-	if (LOT->Zone == ZoneType::Water || LOT->Fly != NO_FLYING)
-		floorBox = ResolveRuntimeBox(rawFloorBox);
 	int height = g_Level.PathfindingBoxes[floorBox].height;
 
 	// PORTAL-Y RETRY (movement, active-guarded): at a vertical portal the head-Y floor probe
@@ -1988,41 +1985,24 @@ bool SearchLOT(LOTInfo* LOT, int depth)
 // ============================================================================
 // RUNTIME PER-COMBINATION ZONE RE-FLOOD
 // ============================================================================
-// The compiler bakes only two global zone snapshots (all-unflipped / all-flipped)
-// selected by the single global FlipStatus. That cannot represent independent flip
-// groups: when group 1 is flipped but group 0 is not, a box in the unflipped group-0
-// room is "Unflipped-only" and has no zone in the flipped snapshot the global
-// FlipStatus forces everyone to read, so the creature there can't path to a target in
-// the flipped room (and vice versa). These routines rebuild a zone table for the ACTUAL
-// current flip combination, using each box's real room state, and are recomputed at
-// level load and on every DoFlipMap.
+// Zones are derived from active sector box IDs and exact overlap state masks for the
+// current independent flip-group combination. Recomputed at load and on every DoFlipMap.
 
-static std::vector<int>         s_boxFlipGroup;   // flip group of each box's room, or NO_VALUE
-static std::vector<signed char> s_boxNativeState; // 0 = base-only, 1 = alt-only, 2 = both (merged / non-alternated)
 static std::vector<int>         s_runtimeZones[(int)ZoneType::MaxZone];
 static std::vector<char>        s_runtimeActiveBoxes; // boxes present in currently active room-sector data
-static std::vector<int>         s_runtimeBoxAliases; // inactive overlay boxes redirected to active live boxes
 
 static std::vector<std::vector<ReversePathEdge>> s_reverseEdges; // per target box: boxes that can move forward into it
-
-static int ResolveRuntimeBox(int box)
-{
-	if (box < 0 || box >= (int)s_runtimeBoxAliases.size())
-		return box;
-
-	return s_runtimeBoxAliases[box];
-}
 
 static int ResolveCreatureCurrentBox(ItemInfo* item)
 {
 	if (item == nullptr)
 		return NO_VALUE;
 
-	int legacyBox = NO_VALUE;
+	int roomSectorBox = NO_VALUE;
 	if (item->RoomNumber >= 0 && item->RoomNumber < (int)g_Level.Rooms.size())
 	{
 		auto* room = &g_Level.Rooms[item->RoomNumber];
-		legacyBox = GetSector(room, item->Pose.Position.x - room->Position.x, item->Pose.Position.z - room->Position.z)->PathfindingBoxID;
+		roomSectorBox = GetSector(room, item->Pose.Position.x - room->Position.x, item->Pose.Position.z - room->Position.z)->PathfindingBoxID;
 	}
 
 	auto pointColl = GetPointCollision(item->Pose.Position, item->RoomNumber);
@@ -2037,8 +2017,8 @@ static int ResolveCreatureCurrentBox(ItemInfo* item)
 	}
 
 	if ((resolvedBox == NO_VALUE || !IsBoxUsableNow(resolvedBox)) &&
-		legacyBox != NO_VALUE && IsBoxUsableNow(legacyBox))
-		resolvedBox = legacyBox;
+		roomSectorBox != NO_VALUE && IsBoxUsableNow(roomSectorBox))
+		resolvedBox = roomSectorBox;
 
 	return resolvedBox;
 }
@@ -2048,95 +2028,14 @@ const std::vector<int>& GetRuntimeZoneTable(int zoneType)
 	return s_runtimeZones[zoneType];
 }
 
-// Redirect every portal that points at an ALTERNATE room to its BASE room. TEN keeps the
-// currently-active variant of a flip pair in the BASE room slot (FlipRooms swaps the DATA
-// between the base and alt slots, but the game always accesses the active room via the base
-// number). Levels, however, link alt rooms with alt->alt portals (room1 -> room3). In a MIXED
-// flip state (group 1 flipped, group 0 not) that sends a probe leaving the flipped room into
-// the INACTIVE alt slot (room3 = room0's alt) instead of the active base (room0), so the
-// geometry/boxes of the unflipped room are read from its alternate. Pointing every portal at
-// the base slot makes it always resolve to the active variant -- correct in base, global-flip
-// and mixed-flip states alike. Done once at load (idempotent: base rooms are never alt targets).
-static void RemapAlternateRoomPortals()
-{
-	int n = (int)g_Level.Rooms.size();
-	std::vector<int> altToBase(n, NO_VALUE);
-	for (int r = 0; r < n; r++)
-	{
-		int alt = g_Level.Rooms[r].flippedRoom;
-		if (alt != NO_VALUE && alt >= 0 && alt < n)
-			altToBase[alt] = r;
-	}
-
-	auto remap = [&](int& rm) -> bool
-	{
-		if (rm != NO_VALUE && rm >= 0 && rm < n && altToBase[rm] != NO_VALUE)
-		{
-			rm = altToBase[rm];
-			return true;
-		}
-		return false;
-	};
-
-	for (auto& room : g_Level.Rooms)
-	{
-		for (auto& sector : room.Sectors)
-		{
-			remap(sector.SidePortalRoomNumber);
-			for (auto& tri : sector.FloorSurface.Triangles)
-				remap(tri.PortalRoomNumber);
-			for (auto& tri : sector.CeilingSurface.Triangles)
-				remap(tri.PortalRoomNumber);
-		}
-	}
-}
-
-static void BuildPathfindingFlipMetadata()
-{
-	int boxCount = (int)g_Level.PathfindingBoxes.size();
-	s_boxFlipGroup.assign(boxCount, NO_VALUE);
-	s_boxNativeState.assign(boxCount, 2); // default: present in both states (non-alternated / merged)
-
-	for (int box = 0; box < boxCount; box++)
-	{
-		int flags = g_Level.PathfindingBoxes[box].flags;
-		if ((flags & BOX_FLIP_METADATA) == 0)
-			continue;
-
-		int encodedGroup = (flags & BOX_FLIP_GROUP_MASK) >> BOX_FLIP_GROUP_SHIFT;
-		int group = (encodedGroup > 0) ? encodedGroup - 1 : NO_VALUE;
-		int native = (flags & BOX_FLIP_NATIVE_MASK) >> BOX_FLIP_NATIVE_SHIFT;
-
-		s_boxFlipGroup[box] = (group >= 0 && group < MAX_FLIPMAP) ? group : NO_VALUE;
-		s_boxNativeState[box] = (native >= 0 && native <= 2) ? (signed char)native : 2;
-	}
-
-}
-
-// Is this box the one its sector currently resolves to, given the live per-room flip state?
-static bool IsBoxActiveNow(int box)
-{
-	if (box < 0 || box >= (int)s_boxNativeState.size())
-		return true;
-
-	int native = s_boxNativeState[box];
-	if (native == 2)
-		return true;
-
-	int group = s_boxFlipGroup[box];
-	bool flipped = (group != NO_VALUE && group < MAX_FLIPMAP && FlipStats[group]);
-	return (native == 0) ? !flipped : flipped; // base-only active while unflipped; alt-only while flipped
-}
-
 static bool IsBoxUsableNow(int box)
 {
 	return box >= 0 && box < (int)s_runtimeActiveBoxes.size() &&
 		s_runtimeActiveBoxes[box] != 0;
 }
 
-// Cross-group entries carry their exact compiler room groups and state mask. Legacy entries
-// fall back to the source box's unflipped/flipped validity bits.
-static bool OverlapActiveForEdge(int fromBox, int overlapFlags)
+// Flip-dependent entries carry their exact compiler room groups and state mask.
+static bool OverlapActiveForEdge(int overlapFlags)
 {
 	if (overlapFlags & OVERLAP_PAIR_STATE_VALIDITY)
 	{
@@ -2152,13 +2051,7 @@ static bool OverlapActiveForEdge(int fromBox, int overlapFlags)
 		return (stateMask & (1 << (OVERLAP_PAIR_STATE_MASK_SHIFT + state))) != 0;
 	}
 
-	if ((overlapFlags & (OVERLAP_UNFLIPPED_VALID | OVERLAP_FLIPPED_VALID)) == 0)
-		return true; // untagged (legacy compile) -> valid in both states
-
-	int group = (fromBox >= 0 && fromBox < (int)s_boxFlipGroup.size()) ? s_boxFlipGroup[fromBox] : NO_VALUE;
-	bool flipped = (group != NO_VALUE && group < MAX_FLIPMAP && FlipStats[group]);
-	int needBit = flipped ? OVERLAP_FLIPPED_VALID : OVERLAP_UNFLIPPED_VALID;
-	return (overlapFlags & needBit) != 0;
+	return true;
 }
 
 static bool TryGetCompiledOverlapFlags(int fromBox, int toBox, int& flags)
@@ -2187,17 +2080,7 @@ static bool TryGetCompiledOverlapFlags(int fromBox, int toBox, int& flags)
 	return false;
 }
 
-static int GetBoxOverlapAreaXZ(int a, int b)
-{
-	auto& A = g_Level.PathfindingBoxes[a];
-	auto& B = g_Level.PathfindingBoxes[b];
-	int xOverlap = std::min((int)A.bottom, (int)B.bottom) - std::max((int)A.top, (int)B.top);
-	int zOverlap = std::min((int)A.right, (int)B.right) - std::max((int)A.left, (int)B.left);
-
-	return (xOverlap > 0 && zOverlap > 0) ? xOverlap * zOverlap : 0;
-}
-
-static std::vector<char> BuildActiveBoxSet(std::vector<int>& activeBoxes)
+static std::vector<char> BuildActiveBoxSet()
 {
 	int boxCount = (int)g_Level.PathfindingBoxes.size();
 	std::vector<char> activeBoxSet(boxCount, false);
@@ -2210,48 +2093,14 @@ static std::vector<char> BuildActiveBoxSet(std::vector<int>& activeBoxes)
 		for (const auto& sector : room.Sectors)
 		{
 			int box = sector.PathfindingBoxID;
-			if (box != NO_VALUE &&
-				box < boxCount &&
-				IsBoxActiveNow(box) &&
-				!activeBoxSet[box])
+			if (box >= 0 && box < boxCount)
 			{
-				activeBoxes.push_back(box);
 				activeBoxSet[box] = true;
 			}
 		}
 	}
 
 	return activeBoxSet;
-}
-
-static void BuildRuntimeBoxAliases(const std::vector<int>& activeBoxes, const std::vector<char>& activeBoxSet)
-{
-	int boxCount = (int)g_Level.PathfindingBoxes.size();
-	s_runtimeBoxAliases.resize(boxCount);
-	for (int box = 0; box < boxCount; box++)
-		s_runtimeBoxAliases[box] = box;
-
-	for (int overlayBox = 0; overlayBox < boxCount; overlayBox++)
-	{
-		if (activeBoxSet[overlayBox] != 0)
-			continue;
-
-		int bestBox = NO_VALUE;
-		int bestArea = 0;
-
-		for (int activeBox : activeBoxes)
-		{
-			int area = GetBoxOverlapAreaXZ(overlayBox, activeBox);
-			if (area > bestArea)
-			{
-				bestBox = activeBox;
-				bestArea = area;
-			}
-		}
-
-		if (bestBox != NO_VALUE)
-			s_runtimeBoxAliases[overlayBox] = bestBox;
-	}
 }
 
 static void BuildReversePathfindingEdges()
@@ -2298,29 +2147,26 @@ static void ApplyCompiledSectorBoxVariants()
 		if (variants.SectorIndex < 0 || variants.SectorIndex >= (int)room.Sectors.size())
 			continue;
 
-		int selectedBox = variants.DefaultBox;
-		for (const auto& boxCase : variants.Cases)
-		{
-			bool matches = true;
-			for (const auto& condition : boxCase.Conditions)
-			{
-				if (condition.FlipGroup < 0 || condition.FlipGroup >= MAX_FLIPMAP ||
-					(bool)FlipStats[condition.FlipGroup] != condition.Flipped)
-				{
-					matches = false;
-					break;
-				}
-			}
+		if (variants.FlipGroups.size() >= 31)
+			continue;
 
-			if (matches)
-			{
-				selectedBox = boxCase.Box;
-				break;
-			}
+		int state = 0;
+		for (int groupIndex = 0; groupIndex < (int)variants.FlipGroups.size(); groupIndex++)
+		{
+			int group = variants.FlipGroups[groupIndex];
+			if (group < 0 || group >= MAX_FLIPMAP)
+				continue;
+			if (FlipStats[group])
+				state |= 1 << groupIndex;
 		}
+		if (state < 0 || state >= (int)variants.Boxes.size())
+			continue;
+
+		int selectedBox = variants.Boxes[state];
 
 		room.Sectors[variants.SectorIndex].PathfindingBoxID =
 			(selectedBox >= 0 && selectedBox < boxCount) ? selectedBox : NO_VALUE;
+
 	}
 }
 
@@ -2329,9 +2175,7 @@ void RecomputeRuntimeZones()
 	int boxCount = (int)g_Level.PathfindingBoxes.size();
 	ApplyCompiledSectorBoxVariants();
 
-	std::vector<int> activeBoxes;
-	s_runtimeActiveBoxes = BuildActiveBoxSet(activeBoxes);
-	BuildRuntimeBoxAliases(activeBoxes, s_runtimeActiveBoxes);
+	s_runtimeActiveBoxes = BuildActiveBoxSet();
 
 	std::vector<int> stack;
 	for (int zoneType = 0; zoneType < (int)ZoneType::MaxZone; zoneType++)
@@ -2365,7 +2209,7 @@ void RecomputeRuntimeZones()
 				{
 					if (nb < 0 || nb >= boxCount || zones[nb] != 0)
 						return;
-					if (!IsBoxUsableNow(nb) || !OverlapActiveForEdge(cur, ovf))
+					if (!IsBoxUsableNow(nb) || !OverlapActiveForEdge(ovf))
 						return;
 
 					bool canJump   = (ovf & OVERLAP_JUMP) != 0;
@@ -2385,12 +2229,19 @@ void RecomputeRuntimeZones()
 
 					// FILTER: water boundary (mirrors the compiler's seed-relative test).
 					bool canCrossWater = (zoneType == (int)ZoneType::Amphibious) ||
-					                     (zoneType == (int)ZoneType::Human && canMonkey);
+					                     (zoneType == (int)ZoneType::HumanJumpMonkey && canMonkey);
 					bool shallowOverlap = (nbShallow && seedShallow) ||
 					                      (nbShallow && !seedWater) ||
 					                      (seedShallow && !nbWater);
 					shallowOverlap = landZone && shallowOverlap;
 					if (nbWater != seedWater && !canCrossWater && !shallowOverlap)
+						return;
+
+					bool zoneCanJump =
+						zoneType == (int)ZoneType::Skeleton ||
+						zoneType == (int)ZoneType::HumanJump ||
+						zoneType == (int)ZoneType::HumanJumpMonkey;
+					if (canJump && !zoneCanJump)
 						return;
 
 					// FILTER: per-zone-type movement capability.
@@ -2401,7 +2252,9 @@ void RecomputeRuntimeZones()
 					case ZoneType::Basic:      add = (step <= CLICK(1)); break;
 					case ZoneType::Water:      add = true; break;
 					case ZoneType::Amphibious: add = canAmphib && !canJump && !(nbSlope && !nbWater); break;
-					case ZoneType::Human:      add = (step <= BLOCK(1) || canJump || canMonkey); break;
+					case ZoneType::Human:      add = (step <= BLOCK(1)); break;
+					case ZoneType::HumanJump:  add = (step <= BLOCK(1) || canJump); break;
+					case ZoneType::HumanJumpMonkey: add = (step <= BLOCK(1) || canJump || canMonkey); break;
 					case ZoneType::Flyer:      add = true; break;
 					default: break;
 					}
@@ -2471,6 +2324,7 @@ void RefreshCreatureRuntimeZone(ItemInfo* item)
 
 		lot.Node[lot.ZoneCount++].boxNumber = box;
 	}
+
 }
 
 bool CanExpandToBox(LOTInfo* LOT, int fromBox, int toBox, int overlapFlags, int searchZone, const std::vector<int>& zone)
@@ -2490,11 +2344,12 @@ bool CanExpandToBox(LOTInfo* LOT, int fromBox, int toBox, int overlapFlags, int 
 	// that forward edge from s_reverseEdges[fromBox].
 	int forwardFlags = overlapFlags;
 	int delta = head.height - candidate.height;
+	bool amphibiousTraversal = LOT->Zone == ZoneType::Amphibious &&
+		(forwardFlags & OVERLAP_AMPHIBIOUS_TRAVERSABLE);
 
-	// FLIP-STATE VALIDITY: an overlap leaving a box is usable only if it carries the bit matching
-	// that box's REAL room flip state (not the global FlipStatus), so independent flip groups
-	// work. Untagged legacy entries are accepted in both states.
-	if (!IsBoxUsableNow(fromBox) || !IsBoxUsableNow(toBox) || !OverlapActiveForEdge(toBox, forwardFlags))
+	// Both boxes must belong to active sectors, and a flip-dependent overlap must match the
+	// exact current source/target group state encoded by the compiler.
+	if (!IsBoxUsableNow(fromBox) || !IsBoxUsableNow(toBox) || !OverlapActiveForEdge(forwardFlags))
 		return false;
 
 	// PENALTY CHECK: Ignore box, if it is memorized as bad.
@@ -2510,7 +2365,9 @@ bool CanExpandToBox(LOTInfo* LOT, int fromBox, int toBox, int overlapFlags, int 
 		return false;
 
 	// HEIGHT CHECK: Can creature traverse the height difference?
-	if ((delta > LOT->Step || delta < LOT->Drop) && (!(forwardFlags & OVERLAP_MONKEY) || !LOT->CanMonkey))
+	if (!amphibiousTraversal &&
+		(delta > LOT->Step || delta < LOT->Drop) &&
+		(!(forwardFlags & OVERLAP_MONKEY) || !LOT->CanMonkey))
 		return false;
 
 	// JUMP CHECK: Does this overlap require jumping?
@@ -3180,7 +3037,6 @@ int TargetReachable(ItemInfo* item, ItemInfo* enemy)
 	const auto& creature = *GetCreatureInfo(item);
 	auto pointColl = GetPointCollision(enemy->Pose.Position, enemy->RoomNumber);
 	int floorBox = pointColl.GetSector().PathfindingBoxID;
-	int resolvedFloorBox = (floorBox != NO_VALUE && IsBoxUsableNow(floorBox)) ? floorBox : NO_VALUE;
 
 	// NEW: Only update enemy box number if it is actually reachable by the enemy.
 	// This prevents enemies from running to the player and attacking nothing when they are hanging or shimmying. -- Lwmte, 27.06.22
@@ -3220,14 +3076,14 @@ int TargetReachable(ItemInfo* item, ItemInfo* enemy)
 	// Don't try to chase enemy into bad boxes.
 	for (auto& box : creature.LOT.BadBoxes)
 	{
-		if ((box.BoxNumber == floorBox || box.BoxNumber == resolvedFloorBox) && box.Count < 0)
+		if (box.BoxNumber == floorBox && box.Count < 0)
 		{
 			isReachable = false;
 			break;
 		}
 	}
 
-	return (isReachable ? resolvedFloorBox : NO_VALUE);
+	return (isReachable ? floorBox : NO_VALUE);
 }
 
 /**
@@ -3511,8 +3367,9 @@ void CreatureMood(ItemInfo* item, AI_INFO* AI, bool isViolent)
 	// Process bad box checks.
 	UpdateBadBoxes(item);
 
-	// Fallback: if no target box, use creature's current box.
-	if (LOT->TargetBox == NO_VALUE)
+	// Fall back to the current box only when this mood did not select a destination.
+	// RequiredBox may already contain the enemy box before the first search starts.
+	if (LOT->TargetBox == NO_VALUE && LOT->RequiredBox == NO_VALUE)
 		TargetBox(LOT, item->BoxNumber);
 
 	// Calculate the actual world position to move toward.
@@ -4171,12 +4028,8 @@ void InitializeItemBoxData()
 			}
 		}
 	}
-	// Normalize alternate-room portals before building mixed flip-state pathfinding data.
-	RemapAlternateRoomPortals();
-
-	// Build per-box flip metadata and compute the runtime zone table for the current
-	// (load-time, unflipped) flip combination. Recomputed on every DoFlipMap.
-	BuildPathfindingFlipMetadata();
+	// Build the runtime zone table for the load-time flip combination.
+	// It is recomputed on every DoFlipMap.
 	BuildReversePathfindingEdges();
 	RecomputeRuntimeZones();
 }

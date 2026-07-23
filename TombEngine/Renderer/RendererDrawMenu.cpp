@@ -1858,7 +1858,7 @@ namespace TEN::Renderer
 			PrintDebugMessage("PATHFINDING STATS");
 			PrintDebugMessage(" ");
 			{
-				int playerBoxID = playerItem.BoxNumber == NO_VALUE ? GetPointCollision(playerItem).GetBottomSector().PathfindingBoxID : playerItem.BoxNumber;
+				int playerBoxID = GetPointCollision(playerItem).GetSector().PathfindingBoxID;
 				PrintDebugMessage("Player box number: %d", playerBoxID);
 
 				auto creatures = GetActiveCreatures();

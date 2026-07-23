@@ -6,7 +6,7 @@ struct ItemInfo;
 
 constexpr auto BAD_BOX_MEMORY_SIZE = 4;
 
-// Default zone loaded by TEN. They are added by TE at compile time.
+// Runtime connectivity tables built from the active boxes and overlaps.
 enum class ZoneType
 {
 	Skeleton,	// Enables jump, also 1 block vault and fall.
@@ -17,8 +17,10 @@ enum class ZoneType
 
 	Human,		// Enables 1 block vault and fall.
 	Flyer,		// Enables flying anywhere except water rooms.
+	HumanJump,	// Human movement plus jump overlaps.
+	HumanJumpMonkey, // Human movement plus jump and monkey overlaps.
 
-	MaxZone		// Used when loading level.
+	MaxZone
 };
 
 enum class MoodType

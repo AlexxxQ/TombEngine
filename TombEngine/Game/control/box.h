@@ -89,17 +89,8 @@ constexpr auto BOX_SHALLOW = 0x0400;
 constexpr auto BOX_SLOPE   = 0x0800;  // Steep floor; exported by the compiler so the runtime zone
                                       // re-flood can reproduce the land slope filter.
 
-constexpr auto BOX_FLIP_GROUP_SHIFT  = 16;
-constexpr auto BOX_FLIP_GROUP_MASK   = 0x01FF0000; // 9 bits: stored as group + 1, 0 = no group.
-constexpr auto BOX_FLIP_NATIVE_SHIFT = 25;
-constexpr auto BOX_FLIP_NATIVE_MASK  = 0x06000000; // 0 = base-only, 1 = alt-only, 2 = both.
-constexpr auto BOX_FLIP_METADATA     = 0x08000000;
-
 // FLIP-STATE VALIDITY (compiler-baked, runtime BFS filter).
-// The legacy bits cover one flip group. Cross-group edges additionally carry the
-// exact source/target group IDs and a four-combination state mask.
-constexpr auto OVERLAP_UNFLIPPED_VALID			= 0x0001;
-constexpr auto OVERLAP_FLIPPED_VALID			= 0x0002;
+// Flip-dependent edges carry exact source/target group IDs and a four-state mask.
 constexpr auto OVERLAP_ROUTE_EXIT_FLOOR_HINT	= 0x0004;
 // Exact validity for an edge joining independent flip groups. The group IDs and
 // four-state mask are packed into unused flag bits, preserving OVERLAP's size.
@@ -181,12 +172,8 @@ void CreatureHealth(ItemInfo* item);
 void AdjustStopperFlag(ItemInfo* item, int direction);
 void InitializeItemBoxData();
 
-// Runtime per-combination zone re-flood. The compiler bakes only two global zone snapshots
-// (all-unflipped / all-flipped) selected by the single global FlipStatus. That cannot express
-// independent flip groups (e.g. group 1 flipped while group 0 stays put): a box in a non-flipped
-// alternated room has no zone in the opposite snapshot, so cross-group pathfinding breaks. These
-// rebuild a zone table for the ACTUAL current flip combination from the live box/overlap data and
-// each room's real flip state, and are recomputed at load and on every DoFlipMap.
+// Runtime zones are rebuilt from active sector box IDs and exact overlap state masks for the
+// current combination of independent flip groups. Recomputed at load and on every DoFlipMap.
 void RecomputeRuntimeZones();
 const std::vector<int>& GetRuntimeZoneTable(int zoneType);
 void RefreshCreatureRuntimeZone(ItemInfo* item);

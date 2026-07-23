@@ -268,7 +268,7 @@ void InitializeSlot(short itemNumber, bool makeTarget)
 			creature->LOT.Step = BLOCK(1);
 			creature->LOT.Drop = -BLOCK(1);
 			creature->LOT.CanJump = true;
-			creature->LOT.Zone = ZoneType::Human;
+			creature->LOT.Zone = ZoneType::HumanJump;
 			break;
 
 		case LotType::HumanPlusJumpAndMonkey:
@@ -278,7 +278,7 @@ void InitializeSlot(short itemNumber, bool makeTarget)
 			creature->LOT.Drop = -BLOCK(1);
 			creature->LOT.CanJump = true;
 			creature->LOT.CanMonkey = true;  // Can use BOX_MONKEY overlaps.
-			creature->LOT.Zone = ZoneType::Human;
+			creature->LOT.Zone = ZoneType::HumanJumpMonkey;
 			break;
 
 		case LotType::Spider:
@@ -429,13 +429,13 @@ void ClearLOT(LOTInfo* LOT)
  * @brief Creates the navigable zone for a creature based on its starting position.
  *
  * This function determines which boxes the creature can potentially reach by checking
- * zone connectivity. Zones are pre-computed arrays that group boxes together based on
- * reachability for different creature types.
+ * zone connectivity. Runtime zones group active boxes together based on reachability
+ * for different creature types and the current flipmap combination.
  *
  * Zone System Explanation:
- * - Each box has a zone number for each ZoneType (Basic, Skeleton, Water, Human, Flyer, Amphibious).
+ * - Each box has a zone number for each movement-capability ZoneType.
  * - Boxes with the SAME zone number are considered connected/reachable for that creature type.
- * - There are two zone arrays per type: normal and flipped (for flipmap support).
+ * - Each zone type has one table rebuilt after every flipmap change.
  *
  * The function populates LOT.Node[] with box numbers that share the same zone as the
  * creature's starting box. This creates a subset of boxes the creature can pathfind to.
@@ -474,36 +474,23 @@ void CreateZone(ItemInfo* item)
 	else
 	{
 		// NORMAL CASE: Use zone filtering to determine reachable boxes.
-		// Zones are pre-computed arrays that group connected boxes together.
+		const auto& zones = GetRuntimeZoneTable((int)creature->LOT.Zone);
+		if (item->BoxNumber < 0 || item->BoxNumber >= (int)zones.size())
+			return;
 
-		// Get zone arrays for this creature type.
-		// [0] = normal zones, [1] = flipped zones (for flipmap support).
-		int* zone = g_Level.Zones[(int)creature->LOT.Zone][0].data();
-		int* flippedZone = g_Level.Zones[(int)creature->LOT.Zone][1].data();
-
-		// Get the zone number of the creature's starting box.
-		// Only boxes with matching zone numbers are considered reachable.
-		int zoneNumber = zone[item->BoxNumber];
-		int flippedZoneNumber = flippedZone[item->BoxNumber];
+		int zoneNumber = zones[item->BoxNumber];
 
 		auto* node = creature->LOT.Node.data();
 		creature->LOT.ZoneCount = 0;
 
-		// Iterate through ALL boxes and add those in the same zone.
-		// This builds the creature's "reachable set" of boxes.
-		for (int i = 0; i < g_Level.PathfindingBoxes.size(); i++)
+		for (int i = 0; i < (int)zones.size(); i++)
 		{
-			// Check both normal and flipped zone (supports flipmaps).
-			// A box is reachable if it matches EITHER zone state.
-			if (*zone == zoneNumber || *flippedZone == flippedZoneNumber)
+			if (zoneNumber > 0 && zones[i] == zoneNumber)
 			{
 				node->boxNumber = i;
 				node++;
 				creature->LOT.ZoneCount++;
 			}
-
-			zone++;
-			flippedZone++;
 		}
 	}
 }

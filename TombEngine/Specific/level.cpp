@@ -1252,12 +1252,6 @@ void FreeLevel(bool partial)
 	g_Level.SoundMap.resize(0);
 	g_Level.FloorData.resize(0);
 
-	for (int i = 0; i < 2; i++)
-	{
-		for (int j = 0; j < (int)ZoneType::MaxZone; j++)
-			g_Level.Zones[j][i].clear();
-	}
-
 	FreeSamples();
 }
 
@@ -1633,7 +1627,7 @@ bool LoadLevel(const std::string& path, bool partial)
 			UpdateProgress(60);
 
 			LoadSprites();
-			LoadBoxes();
+			LoadBoxes(path.find(DUMMY_LEVEL_NAME) != std::string_view::npos);
 			LoadMirrors();
 			LoadAnimatedTextures();
 			LoadMaterialDefinitions();
@@ -1744,9 +1738,9 @@ void LoadSamples()
 	}
 }
 
-void LoadBoxes()
+void LoadBoxes(bool isDummyLevel)
 {
-	constexpr int SECTOR_BOX_VARIANTS_MAGIC = 0x31564253; // "SBV1"
+	constexpr int SECTOR_BOX_VARIANTS_MAGIC_V2 = 0x32564253; // "SBV2"
 
 	// Read boxes
 	int boxCount = ReadCount(CUBE(1024));
@@ -1760,31 +1754,11 @@ void LoadBoxes()
 	g_Level.Overlaps.resize(overlapCount);
 	ReadBytes(g_Level.Overlaps.data(), overlapCount * sizeof(OVERLAP));
 
-	// Read zones
-	int zoneGroupCount = ReadCount(CUBE(1024));
-	TENLog("Zone group count: " + std::to_string(zoneGroupCount), LogLevel::Info);
-
-	for (int i = 0; i < 2; i++)
-	{
-		for (int j = 0; j < zoneGroupCount; j++)
-		{
-			if (j >= (int)ZoneType::MaxZone)
-			{
-				int excessiveZoneGroups = zoneGroupCount - j + 1;
-				TENLog("Level file contains extra pathfinding data, number of excessive zone groups is " + 
-					std::to_string(excessiveZoneGroups) + ". These zone groups will be ignored.", LogLevel::Warning);
-				CurrentDataPtr += boxCount * sizeof(int);
-			}
-			else
-			{
-				g_Level.Zones[j][i].resize(boxCount);
-				ReadBytes(g_Level.Zones[j][i].data(), boxCount * sizeof(int));
-			}
-		}
-	}
-
 	int variantMarker = ReadInt32();
-	if (variantMarker == SECTOR_BOX_VARIANTS_MAGIC)
+	if (variantMarker != SECTOR_BOX_VARIANTS_MAGIC_V2 && !isDummyLevel)
+		throw std::exception("Level pathfinding data is outdated. Recompile the level with the current Tomb Editor.");
+
+	if (variantMarker == SECTOR_BOX_VARIANTS_MAGIC_V2)
 	{
 		int variantSetCount = ReadCount(CUBE(1024));
 		TENLog("Sector box variant set count: " + std::to_string(variantSetCount), LogLevel::Info);
@@ -1795,30 +1769,21 @@ void LoadBoxes()
 			auto& variants = g_Level.SectorBoxVariants.emplace_back();
 			variants.RoomNumber = ReadInt32();
 			variants.SectorIndex = ReadInt32();
-			variants.DefaultBox = ReadInt32();
-
-			int caseCount = ReadCount(1024);
-			variants.Cases.reserve(caseCount);
-			for (int j = 0; j < caseCount; j++)
-			{
-				auto& boxCase = variants.Cases.emplace_back();
-				boxCase.Box = ReadInt32();
-
-				int conditionCount = ReadCount(MAX_FLIPMAP);
-				boxCase.Conditions.reserve(conditionCount);
-				for (int k = 0; k < conditionCount; k++)
-				{
-					auto& condition = boxCase.Conditions.emplace_back();
-					condition.FlipGroup = ReadInt32();
-					condition.Flipped = ReadBool();
-				}
-			}
+			int groupCount = ReadCount(MAX_FLIPMAP);
+			variants.FlipGroups.resize(groupCount);
+			ReadBytes(variants.FlipGroups.data(), groupCount * sizeof(int));
+			int stateCount = ReadCount(CUBE(1024));
+			variants.Boxes.resize(stateCount);
+			ReadBytes(variants.Boxes.data(), stateCount * sizeof(int));
 		}
 	}
 	else
 	{
-		// Older level: the value belongs to the following mirror block.
-		CurrentDataPtr -= sizeof(int);
+		// The embedded dummy title is an engine resource, not a user-compiled level.
+		int zoneGroupCount = variantMarker;
+		if (zoneGroupCount < 0 || zoneGroupCount > CUBE(1024))
+			throw std::exception("Embedded dummy title has invalid pathfinding data.");
+		CurrentDataPtr += 2ull * zoneGroupCount * boxCount * sizeof(int);
 	}
 
 	// By default all blockable boxes are blocked
