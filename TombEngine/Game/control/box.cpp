@@ -2228,7 +2228,8 @@ void RecomputeRuntimeZones()
 						return;
 
 					// FILTER: water boundary (mirrors the compiler's seed-relative test).
-					bool canCrossWater = (zoneType == (int)ZoneType::Amphibious) ||
+					bool canCrossWater = (zoneType == (int)ZoneType::Flyer) ||
+					                     (zoneType == (int)ZoneType::Amphibious) ||
 					                     (zoneType == (int)ZoneType::HumanJumpMonkey && canMonkey);
 					bool shallowOverlap = (nbShallow && seedShallow) ||
 					                      (nbShallow && !seedWater) ||
@@ -3047,8 +3048,9 @@ int TargetReachable(ItemInfo* item, ItemInfo* enemy)
 	bool isReachable = false;
 	if (creature.LOT.Zone == ZoneType::Flyer)
 	{
-		// Flying creatures can reach any target.
-		isReachable = true;
+		// Flying creatures cannot pursue Lara while she is underwater.
+		isReachable = !enemy->IsLara() ||
+			GetLaraInfo(*enemy).Control.WaterStatus != WaterStatus::Underwater;
 	}
 	else if (creature.LOT.Zone == ZoneType::Water)
 	{

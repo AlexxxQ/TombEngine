@@ -16,7 +16,7 @@ enum class ZoneType
 	Amphibious, // For crocodile like enemies
 
 	Human,		// Enables 1 block vault and fall.
-	Flyer,		// Enables flying anywhere except water rooms.
+	Flyer,		// Enables flight across connected airspace, including above water.
 	HumanJump,	// Human movement plus jump overlaps.
 	HumanJumpMonkey, // Human movement plus jump and monkey overlaps.
 

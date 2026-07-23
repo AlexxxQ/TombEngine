@@ -129,7 +129,7 @@ void DisableEntityAI(short itemNumber)
  * - Basic: Simple ground creatures (1 click step, 2 click drop)
  * - Skeleton: Can jump gaps (uses Skeleton zone)
  * - Human: Can climb 1 block (uses Human zone)
- * - Flyer: Can fly anywhere except water (huge step/drop, uses Flyer zone)
+ * - Flyer: Can cross connected airspace above water (huge step/drop, uses Flyer zone)
  * - Water: Swims underwater only (huge step/drop, uses Water zone)
  * - Amphibious: Can swim AND walk on land (huge step/drop, uses Amphibious zone)
  *
