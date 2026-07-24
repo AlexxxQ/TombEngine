@@ -288,6 +288,12 @@ void DrawItemPathfinding(int itemNumber)
 	while (currentBox != NO_VALUE && nodeCount++ < MAX_DRAW_STEPS)
 	{
 		int nextBox = LOT.Node[currentBox].exitBox;
+		if (nextBox != NO_VALUE &&
+			(LOT.Node[nextBox].searchNumber & SEARCH_NUMBER) != (LOT.SearchNumber & SEARCH_NUMBER))
+		{
+			nextBox = NO_VALUE;
+		}
+
 		auto& box = g_Level.PathfindingBoxes[currentBox];
 		auto& center = GetBoxCenter(currentBox);
 
@@ -1723,32 +1729,6 @@ bool BadFloor(int x, int y, int z, int boxHeight, int nextHeight, short roomNumb
 		item, currentBox, floorBox, nextBox, rawBox))
 		heightResult = false;
 
-	// A tall ground creature may probe above a floor portal and see a fallback floor.
-	// Retry within Drop..Step; real cliffs remain invalid for every sample.
-	if (heightResult && LOT->Zone != ZoneType::Water && LOT->Fly == NO_FLYING)
-	{
-		auto tryProbe = [&](int probeY) -> bool
-		{
-			short rn2 = roomNumber;
-			auto* f = GetFloor(x, probeY, z, &rn2);
-			if (!f || f->PathfindingBoxID == NO_VALUE)
-				return false;
-			int bx2 = f->PathfindingBoxID;
-			int h2 = g_Level.PathfindingBoxes[bx2].height;
-			int dh2 = boxHeight - h2;
-			return (dh2 <= LOT->Step && dh2 >= LOT->Drop);
-		};
-
-		for (int dY = LOT->Drop; dY <= LOT->Step; dY += CLICK(1))
-		{
-			if (tryProbe(boxHeight - dY))
-			{
-				heightResult = false;
-				break;
-			}
-		}
-	}
-
 	if (heightResult)
 		AddBadBox(LOT, floor->PathfindingBoxID);
 
@@ -1971,11 +1951,12 @@ static std::vector<char>        s_runtimeActiveBoxes; // boxes present in curren
 
 static std::vector<std::vector<ReversePathEdge>> s_reverseEdges; // per target box: boxes that can move forward into it
 
-static int ResolveCreatureCurrentBox(ItemInfo* item)
+static int ResolveCreatureCurrentBox(ItemInfo* item, LOTInfo* lot = nullptr)
 {
 	if (item == nullptr)
 		return NO_VALUE;
 
+	int previousBox = item->BoxNumber;
 	int roomSectorBox = NO_VALUE;
 	if (item->RoomNumber >= 0 && item->RoomNumber < (int)g_Level.Rooms.size())
 	{
@@ -1997,6 +1978,23 @@ static int ResolveCreatureCurrentBox(ItemInfo* item)
 	if ((resolvedBox == NO_VALUE || !IsBoxUsableNow(resolvedBox)) &&
 		roomSectorBox != NO_VALUE && IsBoxUsableNow(roomSectorBox))
 		resolvedBox = roomSectorBox;
+
+	if (lot != nullptr && lot->Zone == ZoneType::Flyer &&
+		previousBox >= 0 && previousBox < (int)lot->Node.size() &&
+		IsBoxUsableNow(previousBox))
+	{
+		int routeBox = previousBox;
+		if (!PointInsideBoxXZ(item->Pose.Position.x, item->Pose.Position.z, routeBox))
+			routeBox = lot->Node[previousBox].exitBox;
+
+		if (routeBox >= 0 && routeBox < (int)lot->Node.size() &&
+			IsBoxUsableNow(routeBox) &&
+			(lot->Node[routeBox].searchNumber & SEARCH_NUMBER) == (lot->SearchNumber & SEARCH_NUMBER) &&
+			PointInsideBoxXZ(item->Pose.Position.x, item->Pose.Position.z, routeBox))
+		{
+			resolvedBox = routeBox;
+		}
+	}
 
 	return resolvedBox;
 }
@@ -2272,7 +2270,7 @@ void RefreshCreatureRuntimeZone(ItemInfo* item)
 
 	auto* creature = GetCreatureInfo(item);
 	auto& lot = creature->LOT;
-	int resolvedBox = ResolveCreatureCurrentBox(item);
+	int resolvedBox = ResolveCreatureCurrentBox(item, &lot);
 	if (resolvedBox == NO_VALUE || !IsBoxUsableNow(resolvedBox))
 	{
 		int fallbackBox = creature->LastValidPathBox;
@@ -3098,7 +3096,7 @@ void CreatureAIInfo(ItemInfo* item, AI_INFO* AI)
 	auto* zone = GetRuntimeZoneTable((int)creature->LOT.Zone).data();
 
 	// Resolve through collision because RoomNumber may lead the feet during transitions.
-	item->BoxNumber = ResolveCreatureCurrentBox(item);
+	item->BoxNumber = ResolveCreatureCurrentBox(item, &creature->LOT);
 	AI->zoneNumber = (item->BoxNumber != NO_VALUE) ? zone[item->BoxNumber] : NO_VALUE;
 
 	bool groundCreature = creature->LOT.Zone != ZoneType::Water &&

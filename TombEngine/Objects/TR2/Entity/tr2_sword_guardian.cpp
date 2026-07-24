@@ -218,11 +218,14 @@ namespace TEN::Entities::Creatures::TR2
 		}
 		else
 		{
+			auto previousZone = creature->LOT.Zone;
+
 			creature->LOT.Step = CLICK(1);
-			creature->LOT.Drop = -CLICK(1);
+			creature->LOT.Drop = -CLICK(2);
 			creature->LOT.Fly = NO_FLYING;
 			creature->LOT.Zone = ZoneType::Basic;
 
+			int routeBoxBeforeGroundProbe = item->BoxNumber;
 			AI_INFO ai;
 			CreatureAIInfo(item, &ai);
 
@@ -232,7 +235,15 @@ namespace TEN::Entities::Creatures::TR2
 				creature->LOT.Drop = -BLOCK(20);
 				creature->LOT.Fly = 64;
 				creature->LOT.Zone = ZoneType::Flyer;
+				item->BoxNumber = routeBoxBeforeGroundProbe;
 				CreatureAIInfo(item, &ai);
+			}
+
+			bool lotModeChanged = creature->LOT.Zone != previousZone;
+			if (lotModeChanged)
+			{
+				RefreshCreatureRuntimeZone(item);
+				ClearLOT(&creature->LOT);
 			}
 
 			GetCreatureMood(item, &ai, true);
