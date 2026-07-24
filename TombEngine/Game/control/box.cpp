@@ -786,17 +786,8 @@ static bool TryResolveRouteExitFloorAtVerticalPortal(ItemInfo* item, LOTInfo* LO
 		int rawBx = f->PathfindingBoxID;
 		int surfaceHeight = GetFloorHeight(f, probeX, probeY, probeZ);
 		int stepUp = prevPos.y - surfaceHeight;
-		int equivalentFlags = 0;
-		bool matchesExitSurface = rawBx == exitBox ||
-			(rawBx >= 0 && rawBx < boxCount &&
-			 IsBoxUsableNow(rawBx) &&
-			 zone[rawBx] != 0 && zone[rawBx] == zone[exitBox] &&
-			 g_Level.PathfindingBoxes[rawBx].height == exit.height &&
-			 PointInsideBoxXZ(probeX, probeZ, rawBx) &&
-			 TryGetCompiledOverlapFlags(rawBx, exitBox, equivalentFlags) &&
-			 OverlapActiveForEdge(equivalentFlags));
 
-		if (!matchesExitSurface)
+		if (rawBx != exitBox)
 			return false;
 
 		if (stepUp < 0 || stepUp > LOT->Step)
