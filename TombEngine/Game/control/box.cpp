@@ -876,37 +876,6 @@ bool CreaturePathfind(ItemInfo* item, Vector3i prevPos, short angle, short tilt)
 	int floorBox = rawFloorBox;
 	int height = g_Level.PathfindingBoxes[floorBox].height;
 
-	// A vertical-portal head probe may hit an inactive or phantom box.
-	// Ground creatures retry within Drop..Step and accept only an active box.
-	if (LOT->Zone != ZoneType::Water && LOT->Fly == NO_FLYING && item->BoxNumber != NO_VALUE)
-	{
-		int fb = floorBox;
-		int dh1 = boxHeight - height;
-		bool firstBad = (dh1 > LOT->Step) || (dh1 < LOT->Drop) || (zone[fb] == 0);
-		if (firstBad)
-		{
-			for (int dY = LOT->Drop; dY <= LOT->Step; dY += CLICK(1))
-			{
-				short rn2 = item->RoomNumber;
-				auto* f = GetFloor(item->Pose.Position.x, boxHeight - dY, item->Pose.Position.z, &rn2);
-				if (f == nullptr || f->PathfindingBoxID == NO_VALUE)
-					continue;
-				int bx = f->PathfindingBoxID;
-				int dh2 = boxHeight - g_Level.PathfindingBoxes[bx].height;
-				bool accept = dh2 <= LOT->Step && dh2 >= LOT->Drop && zone[bx] != 0;
-
-				if (accept)
-				{
-					floor = f;
-					floorBox = bx;
-					roomNumber = rn2;
-					height = g_Level.PathfindingBoxes[bx].height;
-					break;
-				}
-			}
-		}
-	}
-
 	TryResolveRouteExitFloorAtVerticalPortal(item, LOT, prevPos, zone, currentBox, boxHeight, floor, floorBox, roomNumber, height);
 
 	int nextHeight = 0;
@@ -2317,7 +2286,7 @@ bool CanExpandToBox(LOTInfo* LOT, int fromBox, int toBox, int overlapFlags, int 
 	// Backward search assigns toBox -> fromBox as the forward route exit.
 	// Validate directional flags for that forward edge.
 	int forwardFlags = overlapFlags;
-	int delta = head.height - candidate.height;
+	int delta = candidate.height - head.height;
 	bool amphibiousTraversal = LOT->Zone == ZoneType::Amphibious &&
 		(forwardFlags & OVERLAP_AMPHIBIOUS_TRAVERSABLE);
 
