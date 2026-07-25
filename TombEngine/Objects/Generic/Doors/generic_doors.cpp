@@ -35,6 +35,19 @@ using namespace TEN::Physics;
 
 namespace TEN::Entities::Doors
 {
+	static void RefreshDoorPathfinding()
+	{
+		RecomputeRuntimeZones(false);
+
+		for (auto creatureIndex : ActiveCreatures)
+		{
+			auto& item = g_Level.Items[creatureIndex];
+			auto* creature = GetCreatureInfo(&item);
+			RefreshCreatureRuntimeZone(&item);
+			ClearLOT(&creature->LOT);
+		}
+	}
+
 	const auto CrowbarDoorPos = Vector3i(-412, 0, 112);
 	const ObjectCollisionBounds CrowbarDoorBounds =
 	{
@@ -402,6 +415,7 @@ namespace TEN::Entities::Doors
 					OpenThatDoor(&door.d2flip, &door);
 					DisableDoorCollisionMesh(doorItem);
 					door.opened = true;
+					RefreshDoorPathfinding();
 				}
 			}
 			else
@@ -419,6 +433,7 @@ namespace TEN::Entities::Doors
 						ShutThatDoor(&door.d2flip, &door);
 						EnableDoorCollisionMesh(doorItem);
 						door.opened = false;
+						RefreshDoorPathfinding();
 					}
 				}
 			}
@@ -440,6 +455,7 @@ namespace TEN::Entities::Doors
 					OpenThatDoor(&door.d2flip, &door);
 					DisableDoorCollisionMesh(doorItem);
 					door.opened = true;
+					RefreshDoorPathfinding();
 				}
 			}
 			else
@@ -456,6 +472,7 @@ namespace TEN::Entities::Doors
 					ShutThatDoor(&door.d2flip, &door);
 					EnableDoorCollisionMesh(doorItem);
 					door.opened = false;
+					RefreshDoorPathfinding();
 				}
 			}
 		}

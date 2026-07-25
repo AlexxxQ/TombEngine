@@ -2106,10 +2106,11 @@ static void ApplyCompiledSectorBoxVariants()
 	}
 }
 
-void RecomputeRuntimeZones()
+void RecomputeRuntimeZones(bool applySectorVariants)
 {
 	int boxCount = (int)g_Level.PathfindingBoxes.size();
-	ApplyCompiledSectorBoxVariants();
+	if (applySectorVariants)
+		ApplyCompiledSectorBoxVariants();
 
 	s_runtimeActiveBoxes = BuildActiveBoxSet();
 
@@ -2126,7 +2127,8 @@ void RecomputeRuntimeZones()
 		int zoneCounter = 1;
 		for (int seed = 0; seed < boxCount; seed++)
 		{
-			if (zones[seed] != 0 || !IsBoxUsableNow(seed))
+			if (zones[seed] != 0 || !IsBoxUsableNow(seed) ||
+				(g_Level.PathfindingBoxes[seed].flags & BLOCKED))
 				continue;
 
 			bool seedWater   = (g_Level.PathfindingBoxes[seed].flags & BOX_WATER) != 0;
@@ -2146,6 +2148,8 @@ void RecomputeRuntimeZones()
 					if (nb < 0 || nb >= boxCount || zones[nb] != 0)
 						return;
 					if (!IsBoxUsableNow(nb) || !OverlapActiveForEdge(ovf))
+						return;
+					if (g_Level.PathfindingBoxes[nb].flags & BLOCKED)
 						return;
 
 					bool canJump   = (ovf & OVERLAP_JUMP) != 0;
@@ -2231,17 +2235,6 @@ void RefreshCreatureRuntimeZone(ItemInfo* item)
 	auto* creature = GetCreatureInfo(item);
 	auto& lot = creature->LOT;
 	int resolvedBox = ResolveCreatureCurrentBox(item, &lot);
-	if (resolvedBox == NO_VALUE || !IsBoxUsableNow(resolvedBox))
-	{
-		int fallbackBox = creature->LastValidPathBox;
-		if (IsBoxUsableNow(fallbackBox))
-			resolvedBox = fallbackBox;
-	}
-	if ((resolvedBox == NO_VALUE || !IsBoxUsableNow(resolvedBox)) &&
-		IsBoxUsableNow(item->BoxNumber))
-	{
-		resolvedBox = item->BoxNumber;
-	}
 	item->BoxNumber = resolvedBox;
 	lot.ZoneCount = 0;
 

@@ -170,8 +170,8 @@ void CreatureHealth(ItemInfo* item);
 void AdjustStopperFlag(ItemInfo* item, int direction);
 void InitializeItemBoxData();
 
-// Rebuild zones from the active boxes and overlap states.
-void RecomputeRuntimeZones();
+// Rebuild zones from active boxes, blockers and overlap states.
+void RecomputeRuntimeZones(bool applySectorVariants = true);
 const std::vector<int>& GetRuntimeZoneTable(int zoneType);
 void RefreshCreatureRuntimeZone(ItemInfo* item);
 

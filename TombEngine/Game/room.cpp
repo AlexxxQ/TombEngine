@@ -3,6 +3,7 @@
 
 #include "Game/collision/collide_room.h"
 #include "Game/collision/Point.h"
+#include "Game/control/box.h"
 #include "Game/control/control.h"
 #include "Game/control/lot.h"
 #include "Game/control/volume.h"
@@ -657,9 +658,6 @@ void ResetRoomData()
 	for (int pathfindingBoxID = 0; pathfindingBoxID < g_Level.PathfindingBoxes.size(); pathfindingBoxID++)
 		g_Level.PathfindingBoxes[pathfindingBoxID].flags &= ~BLOCKED;
 }
-
-// Defined in box.cpp: rebuilds the pathfinding zone table for the current flip combination.
-void RecomputeRuntimeZones();
 
 void DoFlipMap(int group)
 {
