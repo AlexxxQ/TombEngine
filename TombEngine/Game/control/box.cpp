@@ -3629,6 +3629,7 @@ TARGET_TYPE CalculateTarget(Vector3i* target, ItemInfo* item, LOTInfo* LOT)
 		return TARGET_TYPE::NO_TARGET;
 
 	auto* box = &g_Level.PathfindingBoxes[boxNumber];
+	auto* previousRouteBox = box;
 
 	// Convert box boundaries to world coordinates.
 	// Note: box coordinates are in blocks, multiply by BLOCK(1) for world units.
@@ -3643,6 +3644,9 @@ TARGET_TYPE CalculateTarget(Vector3i* target, ItemInfo* item, LOTInfo* LOT)
 	int top = boxTop;
 	int bottom = boxBottom;
 	int direction = CLIP_ALL; // Can move in all directions initially.
+	int routeDirectionX = 0;
+	int routeDirectionZ = 0;
+	bool firstRouteBox = true;
 
 	// Safety limit to prevent infinite loops from corrupted exitBox chains.
 	int maxIterations = (int)g_Level.PathfindingBoxes.size();
@@ -3673,6 +3677,30 @@ TARGET_TYPE CalculateTarget(Vector3i* target, ItemInfo* item, LOTInfo* LOT)
 		boxRight = ((int)box->right * BLOCK(1)) - 1;
 		boxTop = ((int)box->top * BLOCK(1));
 		boxBottom = ((int)box->bottom * BLOCK(1)) - 1;
+
+		// Preserve the corridor target before a route doubles back in X/Z.
+		if (!firstRouteBox)
+		{
+			int stepDirectionX =
+				(box->bottom <= previousRouteBox->top) ? -1 :
+				(box->top >= previousRouteBox->bottom) ? 1 : 0;
+			int stepDirectionZ =
+				(box->right <= previousRouteBox->left) ? -1 :
+				(box->left >= previousRouteBox->right) ? 1 : 0;
+
+			if ((routeDirectionX != 0 && stepDirectionX == -routeDirectionX) ||
+				(routeDirectionZ != 0 && stepDirectionZ == -routeDirectionZ))
+			{
+				return TARGET_TYPE::SECONDARY_TARGET;
+			}
+
+			if (routeDirectionX == 0 && stepDirectionX != 0)
+				routeDirectionX = stepDirectionX;
+			if (routeDirectionZ == 0 && stepDirectionZ != 0)
+				routeDirectionZ = stepDirectionZ;
+		}
+		firstRouteBox = false;
+		previousRouteBox = box;
 
 		// Check if creature is inside this box.
 		if (item->Pose.Position.z >= boxLeft &&
