@@ -91,16 +91,16 @@ namespace TEN::Entities::TR4
 
 	static bool IsCrocodileInWater(ItemInfo* item)
 	{
-		auto* creature = GetCreatureInfo(item);
-		auto bounds = GameBoundingBox(item);
+		if (TestEnvironment(ENV_FLAG_WATER, item) ||
+			(item->BoxNumber >= 0 &&
+			 item->BoxNumber < (int)g_Level.PathfindingBoxes.size() &&
+			 (g_Level.PathfindingBoxes[item->BoxNumber].flags & BOX_SHALLOW)))
+		{
+			return true;
+		}
 
-		auto pointColl = GetPointCollision(*item);
-
-		int waterSurface = pointColl.GetWaterTopHeight();
-		int waterBottom = pointColl.GetWaterBottomHeight();
-		int depth = waterBottom - waterSurface;
-
-		return (depth > CLICK(0.75f) && (waterSurface != NO_HEIGHT) && waterSurface <= (item->Pose.Position.y + bounds.Y2));
+		// Keep swimming if the pivot briefly resolves to a dry room above an open water portal.
+		return GetPointCollision(*item).GetWaterTopHeight() != NO_HEIGHT;
 	}
 
 	static void SetCrocodileWater(ItemInfo* item)

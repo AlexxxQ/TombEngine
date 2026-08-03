@@ -254,15 +254,21 @@ namespace TEN::Entities::Creatures::TR1
 		// Avoid getting stuck at platforms on the water surface.
 		if (item->Animation.ActiveState == BIG_RAT_STATE_SWIM)
 		{
+			bool isStuck = item->Pose.Position.x == prevPos.x && item->Pose.Position.z == prevPos.z;
 			if (item->ItemFlags[0] > 0)
 			{
 				item->Pose.Orientation.y += (short)(item->ItemFlags[1] * BIG_RAT_SWIM_UNSTUCK_TURN_RATE);
 				item->ItemFlags[0]--;
 			}
-			else if (item->Pose.Position.x == prevPos.x && item->Pose.Position.z == prevPos.z)
+			else if (isStuck && item->BoxNumber >= 0 && item->BoxNumber < (int)creature->LOT.Node.size())
 			{
-				item->ItemFlags[0] = 20; // Frames to apply turn.
-				item->ItemFlags[1] = Random::TestProbability(1 / 2.0f) ? 1 : -1; // Random Turn direction.
+				int exitBox = creature->LOT.Node[item->BoxNumber].exitBox;
+				if (exitBox != NO_VALUE && exitBox != item->BoxNumber)
+				{
+					AddBadBox(&creature->LOT, exitBox, true);
+					item->ItemFlags[0] = 20;
+					item->ItemFlags[1] = Random::TestProbability(1 / 2.0f) ? 1 : -1;
+				}
 			}
 		}
 

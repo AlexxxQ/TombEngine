@@ -59,6 +59,7 @@ struct OVERLAP
 {
 	int box;
 	int flags;
+	int heightDelta;
 };
 
 // Priority queue element ordered by estimated total traversal cost for Dijkstra and A* pathfinding.
@@ -154,11 +155,13 @@ int CreatureCreature(short itemNumber);
 bool ValidBox(ItemInfo* item, short zoneNumber, short boxNumber);
 bool EscapeBox(ItemInfo* item, ItemInfo* enemy, int boxNumber);
 void TargetBox(LOTInfo* LOT, int boxNumber);
+void AddBadBox(LOTInfo* LOT, int boxNumber, bool immediate = false);
 bool UpdateLOT(LOTInfo* LOT, int expansion);
 bool SearchLOT(LOTInfo* LOT, int expansion);
 bool SearchLOT_BFS(LOTInfo* LOT, int depth);
 bool SearchLOT_DijkstraAStar(LOTInfo* LOT, int depth, PathfindingMode mode);
-bool CanExpandToBox(LOTInfo* LOT, int fromBox, int toBox, int overlapFlags, int searchZone, const std::vector<int>& zone);
+bool CanExpandToBox(LOTInfo* LOT, int fromBox, int toBox, int overlapFlags, int heightDelta,
+	int searchZone, const std::vector<int>& zone);
 bool CreatureActive(short itemNumber);
 void InitializeCreature(short itemNumber);
 bool StalkBox(ItemInfo* item, ItemInfo* enemy, int boxNumber);
