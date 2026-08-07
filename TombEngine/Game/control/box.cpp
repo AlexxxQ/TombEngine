@@ -72,7 +72,7 @@ using PathQueue = std::priority_queue<QueueElement, std::vector<QueueElement>, s
 static bool IsBoxUsableNow(int box);
 static bool OverlapActiveForEdge(int overlapFlags);
 static bool TryGetCompiledOverlap(int fromBox, int toBox, int& flags, int* heightDelta = nullptr);
-static bool TryResolveRouteExitFloorAtVerticalPortal(ItemInfo* item, LOTInfo* LOT, Vector3i prevPos, const int* zone,
+static bool TryResolveRouteExitFloorAtVerticalPortal(ItemInfo* item, LOTInfo* LOT, const int* zone,
 	int currentBox, int boxHeight, FloorInfo*& floor, int& floorBox, short& roomNumber, int& height);
 
 struct ReversePathEdge
@@ -97,6 +97,13 @@ constexpr auto CREATURE_JOINT_ROTATION_MAX = ANGLE(70.0f);	// Maximum joint rota
 constexpr auto CREATURE_FLY_SMOOTH_FACTOR = 0.1f;			// Smoothing factor for fly/vertical swim velocity.
 
 int PathfindingDisplayIndex = NO_VALUE;
+
+bool CanCreatureLand(const ItemInfo& item)
+{
+	int box = item.BoxNumber;
+	return box >= 0 && box < (int)g_Level.PathfindingBoxes.size() &&
+		!(g_Level.PathfindingBoxes[box].flags & BOX_WATER);
+}
 
 static Vector3 GetVelocity(const ItemInfo& item)
 {
@@ -744,8 +751,7 @@ static bool CanBypassRouteExitBlocker(int x, int z, int boxHeight, int nextHeigh
 	bool activeRouteEdge =
 		routeTo != NO_VALUE &&
 		routeFrom != routeTo &&
-		TryGetCompiledOverlap(routeFrom, routeTo, routeFlags, &routeDelta) &&
-		OverlapActiveForEdge(routeFlags);
+		TryGetCompiledOverlap(routeFrom, routeTo, routeFlags, &routeDelta);
 
 	if (!activeRouteEdge)
 	{
@@ -755,8 +761,7 @@ static bool CanBypassRouteExitBlocker(int x, int z, int boxHeight, int nextHeigh
 		activeRouteEdge =
 			routeTo != NO_VALUE &&
 			routeFrom != routeTo &&
-			TryGetCompiledOverlap(routeFrom, routeTo, routeFlags, &routeDelta) &&
-			OverlapActiveForEdge(routeFlags);
+			TryGetCompiledOverlap(routeFrom, routeTo, routeFlags, &routeDelta);
 	}
 
 	if (routeTo == NO_VALUE || routeFrom == routeTo || blockedBox == routeTo)
@@ -770,7 +775,7 @@ static bool CanBypassRouteExitBlocker(int x, int z, int boxHeight, int nextHeigh
 	return bypass;
 }
 
-static bool TryResolveRouteExitFloorAtVerticalPortal(ItemInfo* item, LOTInfo* LOT, Vector3i prevPos, const int* zone,
+static bool TryResolveRouteExitFloorAtVerticalPortal(ItemInfo* item, LOTInfo* LOT, const int* zone,
 	int currentBox, int boxHeight, FloorInfo*& floor, int& floorBox, short& roomNumber, int& height)
 {
 	if (Objects[item->ObjectNumber].nonLot ||
@@ -797,17 +802,16 @@ static bool TryResolveRouteExitFloorAtVerticalPortal(ItemInfo* item, LOTInfo* LO
 	if (zone[currentBox] == 0 || zone[exitBox] == 0 || zone[currentBox] != zone[exitBox])
 		return false;
 
+	const auto& exit = g_Level.PathfindingBoxes[exitBox];
 	int routeFlags = 0;
-	bool hasRouteEdge = TryGetCompiledOverlap(currentBox, exitBox, routeFlags);
-	bool routeEdgeActive = hasRouteEdge && OverlapActiveForEdge(routeFlags);
+	int routeDelta = boxHeight - exit.height;
 	bool routeExitFloorHint =
-		routeEdgeActive &&
+		TryGetCompiledOverlap(currentBox, exitBox, routeFlags, &routeDelta) &&
 		(routeFlags & OVERLAP_ROUTE_EXIT_FLOOR_HINT) != 0;
 
 	if (!routeExitFloorHint)
 		return false;
 
-	const auto& exit = g_Level.PathfindingBoxes[exitBox];
 	int probeX = std::clamp(item->Pose.Position.x, (int)(exit.top * BLOCK(1)), (int)(exit.bottom * BLOCK(1)) - 1);
 	int probeZ = std::clamp(item->Pose.Position.z, (int)(exit.left * BLOCK(1)), (int)(exit.right * BLOCK(1)) - 1);
 	if (probeX != item->Pose.Position.x || probeZ != item->Pose.Position.z)
@@ -821,9 +825,7 @@ static bool TryResolveRouteExitFloorAtVerticalPortal(ItemInfo* item, LOTInfo* LO
 			return false;
 
 		int rawBx = f->PathfindingBoxID;
-		int surfaceHeight = GetFloorHeight(f, probeX, probeY, probeZ);
-		int stepUp = prevPos.y - surfaceHeight;
-		bool accepted = rawBx == exitBox && stepUp >= LOT->Drop && stepUp <= LOT->Step;
+		bool accepted = rawBx == exitBox && routeDelta >= LOT->Drop && routeDelta <= LOT->Step;
 
 		if (!accepted)
 			return false;
@@ -944,7 +946,7 @@ bool CreaturePathfind(ItemInfo* item, Vector3i prevPos, short angle, short tilt)
 	int height = g_Level.PathfindingBoxes[floorBox].height;
 
 	TryResolveRouteExitFloorAtVerticalPortal(
-		item, LOT, prevPos, zone, currentBox, boxHeight, floor, floorBox, roomNumber, height);
+		item, LOT, zone, currentBox, boxHeight, floor, floorBox, roomNumber, height);
 
 	int nextHeight = 0;
 
@@ -2015,7 +2017,6 @@ static std::vector<int>         s_runtimeZones[(int)ZoneType::MaxZone];
 static std::vector<char>        s_runtimeActiveBoxes; // boxes present in currently active room-sector data
 
 static std::vector<std::vector<ReversePathEdge>> s_reverseEdges; // per target box: boxes that can move forward into it
-static std::vector<int> s_shallowWaterLowEdgeDelta;
 
 static int ResolveCreatureCurrentBox(ItemInfo* item, LOTInfo* lot = nullptr)
 {
@@ -2223,43 +2224,6 @@ static void ApplyCompiledSectorBoxVariants()
 	}
 }
 
-static void BuildShallowWaterEdgePriorities()
-{
-	int boxCount = (int)g_Level.PathfindingBoxes.size();
-	s_shallowWaterLowEdgeDelta.assign(boxCount, NO_VALUE);
-
-	for (int fromBox = 0; fromBox < boxCount; fromBox++)
-	{
-		if (!IsBoxUsableNow(fromBox))
-			continue;
-
-		int index = g_Level.PathfindingBoxes[fromBox].overlapIndex;
-		while (index >= 0 && index < (int)g_Level.Overlaps.size())
-		{
-			const auto& overlap = g_Level.Overlaps[index++];
-			int toBox = overlap.box;
-			if (toBox >= 0 && toBox < boxCount && IsBoxUsableNow(toBox) && OverlapActiveForEdge(overlap.flags))
-			{
-				int fromFlags = g_Level.PathfindingBoxes[fromBox].flags;
-				int toFlags = g_Level.PathfindingBoxes[toBox].flags;
-				int shallowBox = (fromFlags & BOX_SHALLOW) && (toFlags & BOX_WATER) ? fromBox :
-					((fromFlags & BOX_WATER) && (toFlags & BOX_SHALLOW) ? toBox : NO_VALUE);
-
-				if (shallowBox != NO_VALUE)
-				{
-					int delta = abs(overlap.heightDelta);
-					auto& lowDelta = s_shallowWaterLowEdgeDelta[shallowBox];
-					if (lowDelta == NO_VALUE || delta < lowDelta)
-						lowDelta = delta;
-				}
-			}
-
-			if (overlap.flags & OVERLAP_END_BIT)
-				break;
-		}
-	}
-}
-
 void RecomputeRuntimeZones(bool applySectorVariants)
 {
 	int boxCount = (int)g_Level.PathfindingBoxes.size();
@@ -2267,7 +2231,6 @@ void RecomputeRuntimeZones(bool applySectorVariants)
 		ApplyCompiledSectorBoxVariants();
 
 	s_runtimeActiveBoxes = BuildActiveBoxSet();
-	BuildShallowWaterEdgePriorities();
 
 	std::vector<int> stack;
 	for (int zoneType = 0; zoneType < (int)ZoneType::MaxZone; zoneType++)
@@ -2286,8 +2249,7 @@ void RecomputeRuntimeZones(bool applySectorVariants)
 				(g_Level.PathfindingBoxes[seed].flags & BLOCKED))
 				continue;
 
-			bool seedWater   = (g_Level.PathfindingBoxes[seed].flags & BOX_WATER) != 0;
-			bool seedShallow = (g_Level.PathfindingBoxes[seed].flags & BOX_SHALLOW) != 0;
+			bool seedWater = (g_Level.PathfindingBoxes[seed].flags & BOX_WATER) != 0;
 
 			zones[seed] = zoneCounter;
 			stack.clear();
@@ -2304,6 +2266,8 @@ void RecomputeRuntimeZones(bool applySectorVariants)
 						return;
 					if (!IsBoxUsableNow(nb) || !OverlapActiveForEdge(ovf))
 						return;
+					if ((ovf & OVERLAP_FLYER_ONLY) && zoneType != (int)ZoneType::Flyer)
+						return;
 					if (g_Level.PathfindingBoxes[nb].flags & BLOCKED)
 						return;
 
@@ -2312,9 +2276,8 @@ void RecomputeRuntimeZones(bool applySectorVariants)
 					bool canAmphib = (ovf & OVERLAP_AMPHIBIOUS_TRAVERSABLE) != 0;
 
 					int nbFlags    = g_Level.PathfindingBoxes[nb].flags;
-					bool nbWater   = (nbFlags & BOX_WATER) != 0;
-					bool nbShallow = (nbFlags & BOX_SHALLOW) != 0;
-					bool nbSlope   = (nbFlags & BOX_SLOPE) != 0;
+					bool nbWater = (nbFlags & BOX_WATER) != 0;
+					bool nbSlope = (nbFlags & BOX_SLOPE) != 0;
 
 					int step = abs(heightDelta);
 
@@ -2326,11 +2289,7 @@ void RecomputeRuntimeZones(bool applySectorVariants)
 					bool canCrossWater = (zoneType == (int)ZoneType::Flyer) ||
 					                     (zoneType == (int)ZoneType::Amphibious) ||
 					                     (zoneType == (int)ZoneType::HumanJumpMonkey && canMonkey);
-					bool shallowOverlap = (nbShallow && seedShallow) ||
-					                      (nbShallow && !seedWater) ||
-					                      (seedShallow && !nbWater);
-					shallowOverlap = landZone && shallowOverlap;
-					if (nbWater != seedWater && !canCrossWater && !shallowOverlap)
+					if (nbWater != seedWater && !canCrossWater)
 						return;
 
 					bool zoneCanJump =
@@ -2429,6 +2388,8 @@ bool CanExpandToBox(LOTInfo* LOT, int fromBox, int toBox, int overlapFlags, int 
 
 	// Both boxes and the compiler-encoded overlap state must be active.
 	if (!IsBoxUsableNow(fromBox) || !IsBoxUsableNow(toBox) || !OverlapActiveForEdge(forwardFlags))
+		return false;
+	if ((forwardFlags & OVERLAP_FLYER_ONLY) && LOT->Zone != ZoneType::Flyer)
 		return false;
 
 	// PENALTY CHECK: Ignore box, if it is memorized as bad.
@@ -2662,16 +2623,16 @@ bool SearchLOT_DijkstraAStar(LOTInfo* LOT, int depth, PathfindingMode mode)
 			auto  neighborCenter = GetBoxCenter(boxNumber);
 			float edgeCost = useUniformEdgeCost ? 1.0f : Vector3::Distance(currentCenter, neighborCenter);
 
-			if (LOT->Zone == ZoneType::Amphibious)
+			if (LOT->Zone == ZoneType::Amphibious &&
+				!(flags & OVERLAP_SHALLOW_WATER_LOW_EDGE))
 			{
 				int headFlags = g_Level.PathfindingBoxes[headBox].flags;
 				int neighborFlags = g_Level.PathfindingBoxes[boxNumber].flags;
-				int shallowBox = (headFlags & BOX_SHALLOW) && (neighborFlags & BOX_WATER) ? headBox :
-					((headFlags & BOX_WATER) && (neighborFlags & BOX_SHALLOW) ? boxNumber : NO_VALUE);
+				bool crossesWaterShallow =
+					((headFlags & BOX_SHALLOW) && (neighborFlags & BOX_WATER)) ||
+					((headFlags & BOX_WATER) && (neighborFlags & BOX_SHALLOW));
 
-				if (shallowBox != NO_VALUE &&
-					s_shallowWaterLowEdgeDelta[shallowBox] != NO_VALUE &&
-					abs(heightDelta) > s_shallowWaterLowEdgeDelta[shallowBox])
+				if (crossesWaterShallow)
 				{
 					// Keep the high slope edge as a fallback, but prefer entering shallow water at its low edge.
 					edgeCost += useUniformEdgeCost ? 4.0f : BLOCK(4);
@@ -2860,6 +2821,9 @@ int CreatureVault(short itemNumber, short angle, int vault, int shift)
 
 	Vector3i oldPos = item->Pose.Position;
 	int oldBox = item->BoxNumber;
+	auto* creature = GetCreatureInfo(item);
+	int routeExitBox = oldBox >= 0 && oldBox < (int)creature->LOT.Node.size() ?
+		creature->LOT.Node[oldBox].exitBox : NO_VALUE;
 	int xBlock = item->Pose.Position.x / BLOCK(1);
 	int zBlock = item->Pose.Position.z / BLOCK(1);
 	int y = item->Pose.Position.y;
@@ -2902,11 +2866,17 @@ int CreatureVault(short itemNumber, short angle, int vault, int shift)
 		bool crossesSlope =
 			std::abs(sourceNormal.x) > EPSILON || std::abs(sourceNormal.z) > EPSILON ||
 			std::abs(destinationNormal.x) > EPSILON || std::abs(destinationNormal.z) > EPSILON;
+		int routeFlags = 0;
+		bool useResolvedRouteFloor =
+			routeExitBox != NO_VALUE &&
+			PointInsideBoxXZ(destinationProbe.x, destinationProbe.z, routeExitBox) &&
+			TryGetCompiledOverlap(oldBox, routeExitBox, routeFlags) &&
+			(routeFlags & OVERLAP_ROUTE_EXIT_FLOOR_HINT) != 0;
 
 		if (crossesSlope)
 		{
 			int sourceHeight = sourceColl.GetFloorHeight();
-			int destinationHeight = destinationColl.GetFloorHeight();
+			int destinationHeight = useResolvedRouteFloor ? vaultFloor : destinationColl.GetFloorHeight();
 			if (sourceHeight != NO_HEIGHT && destinationHeight != NO_HEIGHT)
 			{
 				vaultBaseY = sourceHeight;
@@ -3458,12 +3428,13 @@ void CreatureMood(ItemInfo* item, AI_INFO* AI, bool isViolent)
 
 	case MoodType::Attack:
 	{
-	// Flying creatures target enemy's upper body when enemy is not in water.
-	bool isEnemyOnLand = enemy->IsLara() ?
-		(GetLaraInfo(*enemy).Control.WaterStatus == WaterStatus::Dry) :
+	// Flying creatures target the upper body of grounded enemies, including Lara while wading.
+	bool isEnemyGrounded = enemy->IsLara() ?
+		(GetLaraInfo(*enemy).Control.WaterStatus == WaterStatus::Dry ||
+		 GetLaraInfo(*enemy).Control.WaterStatus == WaterStatus::Wade) :
 		!TestEnvironment(RoomEnvFlags::ENV_FLAG_WATER, enemy->RoomNumber);
 
-	auto targetOffset = (LOT->Zone == ZoneType::Flyer && isEnemyOnLand) ? Vector3i(0, GetFrame(*enemy).BoundingBox.Y1, 0) : Vector3i::Zero;
+	auto targetOffset = (LOT->Zone == ZoneType::Flyer && isEnemyGrounded) ? Vector3i(0, GetFrame(*enemy).BoundingBox.Y1, 0) : Vector3i::Zero;
 	LOT->Target = PredictTargetPosition(*item, *enemy, targetOffset);
 	LOT->RequiredBox = enemy->BoxNumber;
 

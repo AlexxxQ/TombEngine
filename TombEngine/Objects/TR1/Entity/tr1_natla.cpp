@@ -201,12 +201,15 @@ namespace TEN::Entities::Creatures::TR1
 			creature->LOT.Fly = NO_FLYING;
 			creature->LOT.Zone = ZoneType::Basic;
 			CreatureAIInfo(item, &ai);
+			bool canLand = CanCreatureLand(*item);
+			if (!canLand && item->Animation.ActiveState == NATLA_STATE_FLY)
+				creature->Flags |= NATLA_FLY_MODE;
 
 			shoot = (ai.angle > -NATLA_SHOOT_ANGLE && ai.angle < NATLA_SHOOT_ANGLE) && Targetable(item, &ai);
 
 			if (item->Animation.ActiveState == NATLA_STATE_FLY && (creature->Flags & NATLA_FLY_MODE))
 			{
-				if (shoot && Random::TestProbability(NATLA_LAND_CHANCE))
+				if (canLand && shoot && Random::TestProbability(NATLA_LAND_CHANCE))
 					creature->Flags &= ~NATLA_FLY_MODE;
 
 				if (!(creature->Flags & NATLA_FLY_MODE))

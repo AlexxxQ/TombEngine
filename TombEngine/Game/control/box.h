@@ -92,6 +92,7 @@ constexpr auto BOX_SLOPE   = 0x0800;  // Steep floor; exported by the compiler s
 
 // Compiler-baked flip-state validity for runtime overlap filtering.
 constexpr auto OVERLAP_ROUTE_EXIT_FLOOR_HINT	= 0x0004;
+constexpr auto OVERLAP_FLYER_ONLY				= 0x0001;
 // Independent-group IDs and their four-state mask use spare overlap bits.
 constexpr auto OVERLAP_PAIR_STATE_MASK_SHIFT	= 3;
 constexpr auto OVERLAP_PAIR_STATE_MASK			= 0x0078;
@@ -104,6 +105,7 @@ constexpr auto OVERLAP_PAIR_TARGET_GROUP_SHIFT	= 24;
 constexpr auto OVERLAP_PAIR_TARGET_GROUP_MASK	= 0xFF000000;
 
 constexpr auto OVERLAP_JUMP						= 0x800;
+constexpr auto OVERLAP_SHALLOW_WATER_LOW_EDGE	= 0x1000;
 constexpr auto OVERLAP_MONKEY					= 0x2000;
 constexpr auto OVERLAP_AMPHIBIOUS_TRAVERSABLE	= 0x4000;
 constexpr auto OVERLAP_END_BIT					= 0x8000;
@@ -164,6 +166,7 @@ bool CanExpandToBox(LOTInfo* LOT, int fromBox, int toBox, int overlapFlags, int 
 	int searchZone, const std::vector<int>& zone);
 bool CreatureActive(short itemNumber);
 void InitializeCreature(short itemNumber);
+bool CanCreatureLand(const ItemInfo& item);
 bool StalkBox(ItemInfo* item, ItemInfo* enemy, int boxNumber);
 void CreatureAIInfo(ItemInfo* item, AI_INFO* AI);
 Vector3i PredictTargetPosition(ItemInfo& sourceItem, ItemInfo& targetItem, Vector3i targetOffset = Vector3i(0, 0, 0));

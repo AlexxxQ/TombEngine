@@ -562,7 +562,8 @@ namespace TEN::Entities::Creatures::TR1
 				if (creature.Mood == MoodType::Attack && creature.Enemy != nullptr)
 					creature.Target.y = creature.Enemy->Pose.Position.y;
 
-				if (creature.Mood != MoodType::Escape && isSameZoneInGroundMode && (item.Floor - item.Pose.Position.y) <= CLICK(2))
+				if (CanCreatureLand(item) && creature.Mood != MoodType::Escape && isSameZoneInGroundMode &&
+					(item.Floor - item.Pose.Position.y) <= CLICK(2))
 				{
 					item.Animation.TargetState = WMUTANT_STATE_IDLE; // Switch to ground mode.
 					item.SetFlagField(WMUTANT_CONF_PATHFINDING_MODE, WMUTANT_PATH_GROUND);

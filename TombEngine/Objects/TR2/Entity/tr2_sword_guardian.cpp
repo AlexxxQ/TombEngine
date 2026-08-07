@@ -229,7 +229,9 @@ namespace TEN::Entities::Creatures::TR2
 			AI_INFO ai;
 			CreatureAIInfo(item, &ai);
 
-			if (ai.enemyZone != ai.zoneNumber && item->Animation.ActiveState == SWORD_GUARDIAN_STATE_FLY)
+			bool canLand = CanCreatureLand(*item);
+			if ((ai.enemyZone != ai.zoneNumber || !canLand) &&
+				item->Animation.ActiveState == SWORD_GUARDIAN_STATE_FLY)
 			{
 				creature->LOT.Step = BLOCK(20);
 				creature->LOT.Drop = -BLOCK(20);
@@ -351,7 +353,7 @@ namespace TEN::Entities::Creatures::TR2
 				creature->MaxTurn = SWORD_GUARDIAN_FLY_TURN_RATE_MAX;
 
 				DoSwordGuardianFlyEffect(item);
-				if (creature->LOT.Fly == NO_FLYING)
+				if (canLand && creature->LOT.Fly == NO_FLYING)
 					item->Animation.TargetState = SWORD_GUARDIAN_STATE_IDLE;
 
 				break;

@@ -228,7 +228,8 @@ namespace TEN::Entities::Creatures::TR3
 				{
 					item.Animation.TargetState = WASP_STATE_ATTACK;
 				}
-				else if ((creature.Mood == MoodType::Bored || GetRandomControl() < WASP_LAND_CHANCE) &&
+				else if (CanCreatureLand(item) &&
+					(creature.Mood == MoodType::Bored || GetRandomControl() < WASP_LAND_CHANCE) &&
 					!creature.HurtByLara)
 				{
 					item.Animation.TargetState = WASP_STATE_FLY_IDLE_TO_IDLE;
