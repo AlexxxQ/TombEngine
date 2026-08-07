@@ -731,7 +731,7 @@ static bool PointInsideBoxXZ(int x, int z, int boxNumber)
 }
 
 static bool CanBypassRouteExitBlocker(int x, int z, int boxHeight, int nextHeight, LOTInfo* LOT,
-	ItemInfo* item, int currentBox, int floorBox, int nextBox, int blockedBox)
+	ItemInfo* item, int currentBox, int nextBox, int blockedBox)
 {
 	if (item == nullptr || LOT == nullptr)
 		return false;
@@ -740,8 +740,7 @@ static bool CanBypassRouteExitBlocker(int x, int z, int boxHeight, int nextHeigh
 		LOT->Zone == ZoneType::Water ||
 		LOT->Fly != NO_FLYING ||
 		LOT->IsJumping ||
-		currentBox == NO_VALUE ||
-		floorBox == NO_VALUE)
+		currentBox == NO_VALUE)
 		return false;
 
 	int routeFrom = currentBox;
@@ -752,17 +751,6 @@ static bool CanBypassRouteExitBlocker(int x, int z, int boxHeight, int nextHeigh
 		routeTo != NO_VALUE &&
 		routeFrom != routeTo &&
 		TryGetCompiledOverlap(routeFrom, routeTo, routeFlags, &routeDelta);
-
-	if (!activeRouteEdge)
-	{
-		routeTo = floorBox;
-		routeFlags = 0;
-		routeDelta = boxHeight - nextHeight;
-		activeRouteEdge =
-			routeTo != NO_VALUE &&
-			routeFrom != routeTo &&
-			TryGetCompiledOverlap(routeFrom, routeTo, routeFlags, &routeDelta);
-	}
 
 	if (routeTo == NO_VALUE || routeFrom == routeTo || blockedBox == routeTo)
 		return false;
@@ -1767,7 +1755,7 @@ bool BadFloor(int x, int y, int z, int boxHeight, int nextHeight, short roomNumb
 	if (box->flags & LOT->BlockMask)
 	{
 		if (CanBypassRouteExitBlocker(x, z, boxHeight, nextHeight, LOT,
-			item, currentBox, floorBox, nextBox, rawBox))
+			item, currentBox, nextBox, rawBox))
 			return false;
 
 		return true;
@@ -1792,7 +1780,7 @@ bool BadFloor(int x, int y, int z, int boxHeight, int nextHeight, short roomNumb
 		heightResult = true;
 
 	if (heightResult && CanBypassRouteExitBlocker(x, z, boxHeight, nextHeight, LOT,
-		item, currentBox, floorBox, nextBox, rawBox))
+		item, currentBox, nextBox, rawBox))
 		heightResult = false;
 
 	if (heightResult)
