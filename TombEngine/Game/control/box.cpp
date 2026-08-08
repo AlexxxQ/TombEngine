@@ -825,16 +825,7 @@ static bool TryResolveRouteExitFloorAtVerticalPortal(ItemInfo* item, LOTInfo* LO
 		return true;
 	};
 
-	if (tryProbe(exit.height - CLICK(1)))
-		return true;
-
-	for (int dY = LOT->Drop; dY <= LOT->Step; dY += CLICK(1))
-	{
-		if (tryProbe(boxHeight - dY))
-			return true;
-	}
-
-	return false;
+	return tryProbe(exit.height - CLICK(1));
 }
 
 static FloorInfo* GetSurfaceAmphibiousPathSector(PointCollisionData& pointColl, const LOTInfo* LOT)
