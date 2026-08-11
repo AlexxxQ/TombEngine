@@ -924,7 +924,7 @@ bool CreaturePathfind(ItemInfo* item, Vector3i prevPos, short angle, short tilt)
 	int floorBox = floor->PathfindingBoxID;
 	int height = g_Level.PathfindingBoxes[floorBox].height;
 
-	TryResolveRouteExitFloorAtVerticalPortal(
+	bool routeExitFloorResolved = TryResolveRouteExitFloorAtVerticalPortal(
 		item, LOT, zone, currentBox, boxHeight, floor, floorBox, roomNumber, height);
 
 	int nextHeight = 0;
@@ -951,10 +951,10 @@ bool CreaturePathfind(ItemInfo* item, Vector3i prevPos, short angle, short tilt)
 
 	int floorDelta = boxHeight - height;
 	int floorOverlapFlags = 0;
-	if (currentBox != floorBox)
+	if (!routeExitFloorResolved && currentBox != floorBox)
 		TryGetCompiledOverlap(currentBox, floorBox, floorOverlapFlags, &floorDelta);
 
-	bool heightThresholdReached = LOT->Fly == NO_FLYING && !LOT->IsJumping &&
+	bool heightThresholdReached = !routeExitFloorResolved && LOT->Fly == NO_FLYING && !LOT->IsJumping &&
 		(floorDelta > LOT->Step || floorDelta < LOT->Drop);
 	bool zoneIncorrect = item->BoxNumber != NO_VALUE && !LOT->IsJumping && LOT->Zone != ZoneType::Flyer && (zone[item->BoxNumber] != zone[floorBox]);
 
