@@ -805,27 +805,18 @@ static bool TryResolveRouteExitFloorAtVerticalPortal(ItemInfo* item, LOTInfo* LO
 	if (probeX != item->Pose.Position.x || probeZ != item->Pose.Position.z)
 		return false;
 
-	auto tryProbe = [&](int probeY) -> bool
-	{
-		short rn = (short)FindRoomNumber(Vector3i(probeX, probeY, probeZ), item->RoomNumber);
-		auto* f = GetFloor(probeX, probeY, probeZ, &rn);
-		if (f == nullptr || f->PathfindingBoxID == NO_VALUE)
-			return false;
+	int probeY = exit.height - CLICK(1);
+	short rn = (short)FindRoomNumber(Vector3i(probeX, probeY, probeZ), item->RoomNumber);
+	auto* resolvedFloor = GetFloor(probeX, probeY, probeZ, &rn);
+	if (resolvedFloor == nullptr || resolvedFloor->PathfindingBoxID != exitBox ||
+		routeDelta < LOT->Drop || routeDelta > LOT->Step)
+		return false;
 
-		int rawBx = f->PathfindingBoxID;
-		bool accepted = rawBx == exitBox && routeDelta >= LOT->Drop && routeDelta <= LOT->Step;
-
-		if (!accepted)
-			return false;
-
-		floor = f;
-		floorBox = exitBox;
-		roomNumber = rn;
-		height = exit.height;
-		return true;
-	};
-
-	return tryProbe(exit.height - CLICK(1));
+	floor = resolvedFloor;
+	floorBox = exitBox;
+	roomNumber = rn;
+	height = exit.height;
+	return true;
 }
 
 static FloorInfo* GetSurfaceAmphibiousPathSector(PointCollisionData& pointColl, const LOTInfo* LOT)

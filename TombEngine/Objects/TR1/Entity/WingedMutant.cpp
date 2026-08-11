@@ -274,6 +274,7 @@ namespace TEN::Entities::Creatures::TR1
 		else
 		{
 			AI_INFO ai;
+			int aerialRouteBox = item.BoxNumber;
 			SwitchPathfinding(item, WMUTANT_PATH_GROUND);
 			CreatureAIInfo(&item, &ai);
 
@@ -282,9 +283,11 @@ namespace TEN::Entities::Creatures::TR1
 
 			if (enableFlying && item.Animation.ActiveState == WMUTANT_STATE_FLY)
 			{
+				item.BoxNumber = aerialRouteBox;
 				SwitchPathfinding(item, WMUTANT_PATH_AERIAL);
 				CreatureAIInfo(&item, &ai);
 			}
+			bool usesAerialPathfinding = creature.LOT.Zone == ZoneType::Flyer;
 
 			if (ai.ahead)
 			{
@@ -296,8 +299,8 @@ namespace TEN::Entities::Creatures::TR1
 				torsoYOrient = 0;
 			}
 
-			GetCreatureMood(&item, &ai, isFlying);
-			CreatureMood(&item, &ai, isFlying);
+			GetCreatureMood(&item, &ai, usesAerialPathfinding);
+			CreatureMood(&item, &ai, usesAerialPathfinding);
 			headingAngle = CreatureTurn(&item, creature.MaxTurn);
 
 			switch (item.Animation.ActiveState)
