@@ -743,24 +743,16 @@ static bool CanBypassRouteExitBlocker(int x, int z, int boxHeight, int nextHeigh
 		currentBox == NO_VALUE)
 		return false;
 
-	int routeFrom = currentBox;
-	int routeTo = nextBox;
-	int routeFlags = 0;
-	int routeDelta = boxHeight - nextHeight;
-	bool activeRouteEdge =
-		routeTo != NO_VALUE &&
-		routeFrom != routeTo &&
-		TryGetCompiledOverlap(routeFrom, routeTo, routeFlags, &routeDelta);
-
-	if (routeTo == NO_VALUE || routeFrom == routeTo || blockedBox == routeTo)
+	if (nextBox == NO_VALUE || currentBox == nextBox || blockedBox == nextBox)
 		return false;
 
-	bool insideFrom = PointInsideBoxXZ(x, z, routeFrom);
-	bool insideTo = PointInsideBoxXZ(x, z, routeTo);
-	bool deltaValid = routeDelta <= LOT->Step && routeDelta >= LOT->Drop;
-	bool bypass = activeRouteEdge && deltaValid && (insideFrom || insideTo);
+	int routeFlags = 0;
+	int routeDelta = boxHeight - nextHeight;
+	if (!TryGetCompiledOverlap(currentBox, nextBox, routeFlags, &routeDelta))
+		return false;
 
-	return bypass;
+	return routeDelta <= LOT->Step && routeDelta >= LOT->Drop &&
+		(PointInsideBoxXZ(x, z, currentBox) || PointInsideBoxXZ(x, z, nextBox));
 }
 
 static bool TryResolveRouteExitFloorAtVerticalPortal(ItemInfo* item, LOTInfo* LOT, const int* zone,
