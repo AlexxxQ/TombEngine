@@ -25,8 +25,6 @@
 #include "Specific/level.h"
 #include "Specific/trutils.h"
 
-using namespace TEN::Collision::Room;
-
 // Vertical movement speed for flying creatures (bats, harpies, etc.)
 #define DEFAULT_FLY_UPDOWN_SPEED 16
 
@@ -425,72 +423,8 @@ void ClearLOT(LOTInfo* LOT)
 	}
 }
 
-/**
- * @brief Creates the navigable zone for a creature based on its starting position.
- *
- * This function determines which boxes the creature can potentially reach by checking
- * zone connectivity. Runtime zones group active boxes together based on reachability
- * for different creature types and the current flipmap combination.
- *
- * Zone System Explanation:
- * - Each box has a zone number for each movement-capability ZoneType.
- * - Boxes with the SAME zone number are considered connected/reachable for that creature type.
- * - Each zone type has one table rebuilt after every flipmap change.
- *
- * The function populates LOT.Node[] with box numbers that share the same zone as the
- * creature's starting box. This creates a subset of boxes the creature can pathfind to.
- *
- * Special Cases:
- * - Flyers: Can reach ANY box (bypass zone filtering entirely).
- * - Water/Amphibious: Use their respective zone arrays for connectivity.
- *
- * @param item Pointer to the creature item.
- */
+/** @brief Refreshes a creature's box and navigable set from the current runtime zones. */
 void CreateZone(ItemInfo* item)
 {
-	auto* creature = GetCreatureInfo(item);
-	auto* room = &g_Level.Rooms[item->RoomNumber];
-	auto& object = Objects[item->ObjectNumber];
-
-	// Determine which box the creature is currently standing on.
-	// This uses the sector grid within the room to find the pathfinding box ID.
-	item->BoxNumber = GetSector(room, item->Pose.Position.x - room->Position.x, item->Pose.Position.z - room->Position.z)->PathfindingBoxID;
-
-	// SPECIAL CASE: Flying creatures bypass zone filtering entirely.
-	// They can fly to any box in the level regardless of connectivity.
-	if (object.LotType == LotType::Flyer)
-	{
-		auto* node = creature->LOT.Node.data();
-		creature->LOT.ZoneCount = 0;
-
-		// Add ALL boxes to the creature's navigable set.
-		for (int i = 0; i < g_Level.PathfindingBoxes.size(); i++)
-		{
-			node->boxNumber = i;
-			node++;
-			creature->LOT.ZoneCount++;
-		}
-	}
-	else
-	{
-		// NORMAL CASE: Use zone filtering to determine reachable boxes.
-		const auto& zones = GetRuntimeZoneTable((int)creature->LOT.Zone);
-		if (item->BoxNumber < 0 || item->BoxNumber >= (int)zones.size())
-			return;
-
-		int zoneNumber = zones[item->BoxNumber];
-
-		auto* node = creature->LOT.Node.data();
-		creature->LOT.ZoneCount = 0;
-
-		for (int i = 0; i < (int)zones.size(); i++)
-		{
-			if (zoneNumber > 0 && zones[i] == zoneNumber)
-			{
-				node->boxNumber = i;
-				node++;
-				creature->LOT.ZoneCount++;
-			}
-		}
-	}
+	RefreshCreatureRuntimeZone(item);
 }

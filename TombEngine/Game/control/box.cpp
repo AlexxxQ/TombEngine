@@ -776,7 +776,7 @@ static bool TryResolveRouteExitFloorAtVerticalPortal(ItemInfo* item, LOTInfo* LO
 	if (exitBox < 0 || exitBox >= boxCount)
 		return false;
 
-	if (exitBox == NO_VALUE || exitBox == currentBox || floorBox == exitBox)
+	if (exitBox == currentBox || floorBox == exitBox)
 		return false;
 
 	if (zone[currentBox] == 0 || zone[exitBox] == 0 || zone[currentBox] != zone[exitBox])
@@ -2343,15 +2343,13 @@ bool CanExpandToBox(LOTInfo* LOT, int fromBox, int toBox, int overlapFlags, int 
 
 	// Backward search assigns toBox -> fromBox as the forward route exit.
 	// Validate directional flags for that forward edge.
-	int forwardFlags = overlapFlags;
-	int delta = heightDelta;
 	bool amphibiousTraversal = LOT->Zone == ZoneType::Amphibious &&
-		(forwardFlags & OVERLAP_AMPHIBIOUS_TRAVERSABLE);
+		(overlapFlags & OVERLAP_AMPHIBIOUS_TRAVERSABLE);
 
 	// Both boxes and the compiler-encoded overlap state must be active.
-	if (!IsBoxUsableNow(fromBox) || !IsBoxUsableNow(toBox) || !OverlapActiveForEdge(forwardFlags))
+	if (!IsBoxUsableNow(fromBox) || !IsBoxUsableNow(toBox) || !OverlapActiveForEdge(overlapFlags))
 		return false;
-	if ((forwardFlags & OVERLAP_FLYER_ONLY) && LOT->Zone != ZoneType::Flyer)
+	if ((overlapFlags & OVERLAP_FLYER_ONLY) && LOT->Zone != ZoneType::Flyer)
 		return false;
 
 	// PENALTY CHECK: Ignore box, if it is memorized as bad.
@@ -2363,17 +2361,17 @@ bool CanExpandToBox(LOTInfo* LOT, int fromBox, int toBox, int overlapFlags, int 
 		return false;
 
 	// AMPHIBIOUS: if the overlap is not traversable, avoid this branch.
-	if (LOT->Zone == ZoneType::Amphibious && !(forwardFlags & OVERLAP_AMPHIBIOUS_TRAVERSABLE))
+	if (LOT->Zone == ZoneType::Amphibious && !(overlapFlags & OVERLAP_AMPHIBIOUS_TRAVERSABLE))
 		return false;
 
 	// HEIGHT CHECK: Can creature traverse the height difference?
 	if (!amphibiousTraversal &&
-		(delta > LOT->Step || delta < LOT->Drop) &&
-		(!(forwardFlags & OVERLAP_MONKEY) || !LOT->CanMonkey))
+		(heightDelta > LOT->Step || heightDelta < LOT->Drop) &&
+		(!(overlapFlags & OVERLAP_MONKEY) || !LOT->CanMonkey))
 		return false;
 
 	// JUMP CHECK: Does this overlap require jumping?
-	if ((forwardFlags & OVERLAP_JUMP) && !LOT->CanJump)
+	if ((overlapFlags & OVERLAP_JUMP) && !LOT->CanJump)
 		return false;
 
 	return true;
