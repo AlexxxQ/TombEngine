@@ -169,7 +169,10 @@ namespace TEN::Entities::TR4
 
 			CreatureAIInfo(item, &ai);
 			GetCreatureMood(item, &ai, true);
-			CreatureMood(item, &ai, true);
+			bool isSwimming = IsCrocodileInWater(item) &&
+				(item->Animation.ActiveState == CROC_STATE_SWIM_FORWARD ||
+				 item->Animation.ActiveState == CROC_STATE_WATER_BITE_ATTACK);
+			CreatureMood(item, &ai, true, isSwimming);
 
 			headingAngle = CreatureTurn(item, creature->MaxTurn);
 			boneAngle = headingAngle;

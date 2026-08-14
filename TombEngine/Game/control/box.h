@@ -130,7 +130,7 @@ constexpr auto TARGET_DEVIATION_THRESHOLD = BLOCK(2);
 extern int PathfindingDisplayIndex;
 
 void GetCreatureMood(ItemInfo* item, AI_INFO* AI, bool isViolent);
-void CreatureMood(ItemInfo* item, AI_INFO* AI, bool isViolent);
+void CreatureMood(ItemInfo* item, AI_INFO* AI, bool isViolent, bool directSwimPursuit = false);
 void FindAITargetObject(CreatureInfo* creature, int objectNumber); 
 void FindAITargetObject(CreatureInfo* creature, int objectNumber, int ocb, bool checkSameZone = true);
 void GetAITarget(CreatureInfo* creature);

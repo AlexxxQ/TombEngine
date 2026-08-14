@@ -200,6 +200,34 @@ bool TargetVisible(ItemInfo* item, AI_INFO* ai, float maxAngleInDegrees)
 	return false;
 }
 
+bool TargetVisiblePivotToPivot(ItemInfo* item, AI_INFO* ai, float maxAngleInDegrees)
+{
+	if (!item->IsCreature() || ai->distance >= SQUARE(MAX_VISIBILITY_DISTANCE))
+		return false;
+
+	auto* creature = GetCreatureInfo(item);
+	if (creature == nullptr)
+		return false;
+
+	auto* enemy = creature->Enemy.Get();
+	if (enemy == nullptr || enemy->HitPoints == 0)
+		return false;
+
+	short angle = ai->angle - creature->JointRotation[2];
+	if (angle <= ANGLE(-maxAngleInDegrees) || angle >= ANGLE(maxAngleInDegrees))
+		return false;
+
+	auto origin = item->Pose.Position.ToVector3();
+	auto target = enemy->Pose.Position.ToVector3();
+	origin.y -= 1.0f;
+	target.y -= 1.0f;
+	auto dist = Vector3::Distance(origin, target);
+	auto dir = target - origin;
+	dir.Normalize();
+
+	return !GetRoomLosCollision(origin, item->RoomNumber, dir, dist, true).IsIntersected;
+}
+
 void PerformFinalAttack(ItemInfo& item, const CreatureBiteInfo& bite, int headBoneNumber, int deathAnimNumber, int damage, SOUND_EFFECTS soundID)
 {
 	if (item.Animation.AnimNumber != deathAnimNumber)

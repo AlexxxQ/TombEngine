@@ -48,6 +48,7 @@
 #include "Game/Lara/lara_helpers.h"
 #include "Game/items.h"
 #include "Game/misc.h"
+#include "Game/people.h"
 #include "Game/pickup/pickup.h"
 #include "Game/room.h"
 #include "Game/Setup.h"
@@ -3335,8 +3336,9 @@ void CreatureAIInfo(ItemInfo* item, AI_INFO* AI)
  * @param item Pointer to the creature item.
  * @param AI Pointer to AI_INFO with zone and distance data.
  * @param isViolent If true, creature is aggressive (affects target selection).
+ * @param directSwimPursuit If true, directly pursue a visible enemy in water.
  */
-void CreatureMood(ItemInfo* item, AI_INFO* AI, bool isViolent)
+void CreatureMood(ItemInfo* item, AI_INFO* AI, bool isViolent, bool directSwimPursuit)
 {
 	if (!item->IsCreature())
 		return;
@@ -3461,6 +3463,17 @@ void CreatureMood(ItemInfo* item, AI_INFO* AI, bool isViolent)
 
 	// Calculate the actual world position to move toward.
 	CalculateTarget(&creature->Target, item, &creature->LOT);
+
+	bool enemyInWater = enemy != nullptr && TestEnvironment(RoomEnvFlags::ENV_FLAG_WATER, enemy->RoomNumber);
+	bool directPursuit = LOT->Zone == ZoneType::Flyer ||
+		(LOT->Zone == ZoneType::Water && enemyInWater) ||
+		(directSwimPursuit && LOT->Zone == ZoneType::Amphibious && enemyInWater);
+	bool pivotVisible = directPursuit && creature->Mood == MoodType::Attack && enemy != nullptr &&
+		enemy->BoxNumber != NO_VALUE && TargetVisiblePivotToPivot(item, AI);
+	if (pivotVisible)
+	{
+		creature->Target = LOT->Target;
+	}
 
 	// CHECK FOR SPECIAL TRAVERSAL on path to next box.
 	// These flags tell the creature AI if it needs to jump or monkeyswing.

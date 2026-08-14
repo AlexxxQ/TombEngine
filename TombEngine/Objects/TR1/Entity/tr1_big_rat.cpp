@@ -145,7 +145,10 @@ namespace TEN::Entities::Creatures::TR1
 				head = ai.angle;
 
 			GetCreatureMood(item, &ai, isOnWater);
-			CreatureMood(item, &ai, isOnWater);
+			bool isSwimming = isOnWater &&
+				(item->Animation.ActiveState == BIG_RAT_STATE_SWIM ||
+				 item->Animation.ActiveState == BIG_RAT_STATE_SWIM_BITE_ATTACK);
+			CreatureMood(item, &ai, isOnWater, isSwimming);
 			creature->MaxTurn = isOnWater ? BIG_RAT_SWIM_TURN_RATE_MAX : BIG_RAT_RUN_TURN_RATE_MAX;
 			angle = CreatureTurn(item, creature->MaxTurn);
 
