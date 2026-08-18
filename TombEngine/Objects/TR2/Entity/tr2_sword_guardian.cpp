@@ -238,7 +238,7 @@ namespace TEN::Entities::Creatures::TR2
 				creature->LOT.Fly = 64;
 				creature->LOT.Zone = ZoneType::Flyer;
 				item->BoxNumber = routeBoxBeforeGroundProbe;
-				CreatureAIInfo(item, &ai);
+				CreatureAIInfo(item, &ai, true);
 			}
 
 			bool lotModeChanged = creature->LOT.Zone != previousZone;
@@ -351,6 +351,10 @@ namespace TEN::Entities::Creatures::TR2
 
 			case SWORD_GUARDIAN_STATE_FLY:
 				creature->MaxTurn = SWORD_GUARDIAN_FLY_TURN_RATE_MAX;
+
+				// Override TargetOffset to OG point.
+				if (creature->Mood == MoodType::Attack && creature->Enemy != nullptr)
+					creature->Target.y = creature->Enemy->Pose.Position.y;
 
 				DoSwordGuardianFlyEffect(item);
 				if (canLand && creature->LOT.Fly == NO_FLYING)

@@ -1,6 +1,7 @@
 #include "framework.h"
 #include "Objects/TR4/Entity/tr4_big_beetle.h"
 
+#include "Game/collision/collide_item.h"
 #include "Game/control/control.h"
 #include "Game/effects/effects.h"
 #include "Game/itemdata/creature_info.h"
@@ -17,6 +18,7 @@ using namespace TEN::Math;
 namespace TEN::Entities::TR4
 {
 	constexpr auto BIG_BEETLE_ATTACK_DAMAGE = 50;
+	constexpr auto BIG_BEETLE_FLY_SPEED = 32;
 
 	constexpr auto BIG_BEETLE_ATTACK_RANGE = SQUARE(CLICK(1));
 	constexpr auto BIG_BEETLE_AWARE_RANGE  = SQUARE(CLICK(12));
@@ -74,6 +76,7 @@ namespace TEN::Entities::TR4
 
 		auto* item = &g_Level.Items[itemNumber];
 		auto* creature = GetCreatureInfo(item);
+		creature->LOT.Fly = BIG_BEETLE_FLY_SPEED;
 
 		short angle = 0;
 
@@ -118,6 +121,9 @@ namespace TEN::Entities::TR4
 
 			CreatureMood(item, &AI, true);
 			angle = CreatureTurn(item, creature->MaxTurn);
+			bool inAttackBounds = creature->Enemy != nullptr &&
+				AI.distance < BIG_BEETLE_ATTACK_RANGE &&
+				TestBoundsCollide(item, creature->Enemy.Get(), 0);
 
 			if (item->HitStatus || AI.distance > BIG_BEETLE_AWARE_RANGE ||
 				Random::TestProbability(1 / 128.0f))
@@ -146,7 +152,7 @@ namespace TEN::Entities::TR4
 
 				if (item->Animation.RequiredState != NO_VALUE)
 					item->Animation.TargetState = item->Animation.RequiredState;
-				else if (AI.ahead && AI.distance < BIG_BEETLE_ATTACK_RANGE)
+				else if (AI.ahead && inAttackBounds)
 					item->Animation.TargetState = BBEETLE_STATE_FLY_IDLE;
 
 				break;
@@ -154,9 +160,14 @@ namespace TEN::Entities::TR4
 			case BBEETLE_STATE_ATTACK:
 				creature->MaxTurn = ANGLE(7.0f);
 
-				if (AI.ahead)
+				if (creature->Flags)
 				{
-					if (AI.distance < BIG_BEETLE_ATTACK_RANGE)
+					item->Animation.RequiredState = BBEETLE_STATE_FLY_FORWARD;
+					item->Animation.TargetState = BBEETLE_STATE_FLY_IDLE;
+				}
+				else if (AI.ahead)
+				{
+					if (inAttackBounds)
 						item->Animation.TargetState = BBEETLE_STATE_ATTACK;
 					else
 					{
@@ -164,7 +175,7 @@ namespace TEN::Entities::TR4
 						item->Animation.TargetState = BBEETLE_STATE_FLY_IDLE;
 					}
 				}
-				else if (AI.distance < BIG_BEETLE_ATTACK_RANGE)
+				else if (inAttackBounds)
 					item->Animation.TargetState = BBEETLE_STATE_FLY_IDLE;
 				else
 				{
@@ -203,7 +214,7 @@ namespace TEN::Entities::TR4
 				{
 					if (AI.ahead)
 					{
-						if (AI.distance < BIG_BEETLE_ATTACK_RANGE && !creature->Flags)
+						if (inAttackBounds && !creature->Flags)
 							item->Animation.TargetState = BBEETLE_STATE_ATTACK;
 					}
 				}

@@ -196,6 +196,7 @@ namespace TEN::Entities::Creatures::TR1
 		}
 		else
 		{
+			int aerialRouteBox = item->BoxNumber;
 			creature->LOT.Step = CLICK(1);
 			creature->LOT.Drop = -CLICK(1);
 			creature->LOT.Fly = NO_FLYING;
@@ -222,7 +223,8 @@ namespace TEN::Entities::Creatures::TR1
 				creature->LOT.Drop = -BLOCK(20);
 				creature->LOT.Fly = 16;
 				creature->LOT.Zone = ZoneType::Flyer;
-				CreatureAIInfo(item, &ai);
+				item->BoxNumber = aerialRouteBox;
+				CreatureAIInfo(item, &ai, true);
 			}
 			else if (!shoot)
 			{
@@ -288,6 +290,10 @@ namespace TEN::Entities::Creatures::TR1
 
 			case NATLA_STATE_FLY:
 				creature->MaxTurn = NATLA_FLY_ANGLE_SPEED;
+
+				// Override TargetOffset to OG point.
+				if (creature->Mood == MoodType::Attack && creature->Enemy != nullptr)
+					creature->Target.y = creature->Enemy->Pose.Position.y;
 
 				if (!(creature->Flags & NATLA_FLY_MODE) && item->Pose.Position.y == item->Floor)
 					item->Animation.TargetState = NATLA_STATE_IDLE;

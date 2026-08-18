@@ -285,7 +285,7 @@ namespace TEN::Entities::Creatures::TR1
 			{
 				item.BoxNumber = aerialRouteBox;
 				SwitchPathfinding(item, WMUTANT_PATH_AERIAL);
-				CreatureAIInfo(&item, &ai);
+				CreatureAIInfo(&item, &ai, true);
 			}
 			bool usesAerialPathfinding = creature.LOT.Zone == ZoneType::Flyer;
 

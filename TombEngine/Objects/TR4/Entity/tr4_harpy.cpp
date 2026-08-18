@@ -30,6 +30,7 @@ namespace TEN::Entities::TR4
 	constexpr auto HARPY_STINGER_ATTACK_DAMAGE	= 100;
 	constexpr auto HARPY_SWOOP_ATTACK_DAMAGE	= 10;
 	constexpr auto HARPY_STINGER_POISON_POTENCY = 8;
+	constexpr auto HARPY_FLY_SPEED = 32;
 
 	const auto HarpyBite1	= CreatureBiteInfo(Vector3::Zero, 4);
 	const auto HarpyBite2	= CreatureBiteInfo(Vector3::Zero, 2);
@@ -37,7 +38,7 @@ namespace TEN::Entities::TR4
 	const auto HarpyAttack1 = CreatureBiteInfo(Vector3(0, 128, 0), 2);
 	const auto HarpyAttack2 = CreatureBiteInfo(Vector3(0, 128, 0), 4);
 	const auto HarpySwoopAttackJoints   = std::vector<unsigned int>{ 2, 4, 15 };
-	const auto HarpyStingerAttackJoints = std::vector<unsigned int>{ 2, 4 };
+	const auto HarpyStingerAttackJoints = std::vector<unsigned int>{ 20, 21 };
 
 	enum HarpyState
 	{
@@ -151,7 +152,7 @@ namespace TEN::Entities::TR4
 			if (item->ItemFlags[0] <= 65 && GlobalCounter & 1)
 			{
 				auto pos3 = GetJointPosition(item, HarpyAttack1.BoneID, Vector3i(HarpyAttack1.Position.x, HarpyAttack1.Position.y * 2, HarpyAttack1.Position.z));
-				auto orient = Geometry::GetOrientToPoint(lr.ToVector3(), rh.ToVector3());
+				auto orient = Geometry::GetOrientToPoint(rh.ToVector3(), pos3.ToVector3());
 				auto pose = Pose(rh, orient);
 				TriggerHarpyMissile(&pose, item->RoomNumber, 2);
 			}
@@ -159,8 +160,8 @@ namespace TEN::Entities::TR4
 			if (item->ItemFlags[0] >= 61 && item->ItemFlags[0] <= 65 && !(GlobalCounter & 1))
 			{
 				auto pos3 = GetJointPosition(item, HarpyAttack2.BoneID, Vector3i(HarpyAttack2.Position.x, HarpyAttack2.Position.y * 2, HarpyAttack2.Position.z));
-				auto orient = Geometry::GetOrientToPoint(lr.ToVector3(), rh.ToVector3());
-				auto pose = Pose(rh, orient);
+				auto orient = Geometry::GetOrientToPoint(lr.ToVector3(), pos3.ToVector3());
+				auto pose = Pose(lr, orient);
 				TriggerHarpyMissile(&pose, item->RoomNumber, 2);
 			}
 		}
@@ -180,6 +181,7 @@ namespace TEN::Entities::TR4
 
 		auto* item = &g_Level.Items[itemNumber];
 		auto* creature = GetCreatureInfo(item);
+		creature->LOT.Fly = HARPY_FLY_SPEED;
 
 		short angle = 0;
 		short joint0 = 0;
@@ -274,13 +276,20 @@ namespace TEN::Entities::TR4
 			GetCreatureMood(item, &AI, true);
 			CreatureMood(item, &AI, true);
 
+			if (creature->Enemy != nullptr && item->Animation.ActiveState == HARPY_STATE_FLAME_ATTACK)
+			{
+				creature->Target.x = creature->Enemy->Pose.Position.x;
+				creature->Target.z = creature->Enemy->Pose.Position.z;
+			}
+
 			angle = CreatureTurn(item, creature->MaxTurn);
+			bool inMeleeHeight = abs(AI.verticalDistance) <= BLOCK(1);
 
 			if (AI.ahead)
 			{
 				joint0 = AI.angle / 2;
-				joint2 = AI.angle / 2;
-				joint1 = AI.xAngle;
+				joint1 = AI.angle / 2;
+				joint2 = AI.xAngle;
 			}
 
 			int height = 0;
@@ -355,7 +364,7 @@ namespace TEN::Entities::TR4
 
 				if (AI.ahead)
 				{
-					if (AI.distance >= SQUARE(341))
+					if (!inMeleeHeight || AI.distance >= SQUARE(341))
 					{
 						if (AI.ahead && Random::TestProbability(1 / 2.0f) &&
 							AI.distance >= SQUARE(BLOCK(2)) &&
@@ -385,7 +394,7 @@ namespace TEN::Entities::TR4
 					break;
 				}
 
-				if (AI.distance >= SQUARE(341))
+				if (!inMeleeHeight || AI.distance >= SQUARE(341))
 				{
 					if (AI.ahead && AI.distance >= SQUARE(BLOCK(2)) &&
 						AI.distance > SQUARE(BLOCK(3.5f)) &&
@@ -404,7 +413,8 @@ namespace TEN::Entities::TR4
 
 			case HARPY_STATE_FLY_DOWN:
 				if (!creature->Enemy ||
-					creature->Enemy->Pose.Position.y < (item->Pose.Position.y + BLOCK(2)))
+					creature->Enemy->Pose.Position.y < (item->Pose.Position.y + BLOCK(2)) ||
+					item->Floor < (item->Pose.Position.y + BLOCK(2)))
 				{
 					item->Animation.TargetState = HARPY_STATE_IDLE;
 				}
@@ -414,7 +424,9 @@ namespace TEN::Entities::TR4
 			case HARPY_STATE_FLY_FORWARD_DOWN:
 				creature->MaxTurn = ANGLE(2.0f);
 
-				if (AI.ahead && AI.distance < SQUARE(BLOCK(2)))
+				if (AI.ahead &&
+					inMeleeHeight &&
+					AI.distance < SQUARE(BLOCK(2)))
 					item->Animation.TargetState = HARPY_STATE_SWOOP_ATTACK;
 				else
 					item->Animation.TargetState = HARPY_STATE_GLIDE;
