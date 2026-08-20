@@ -1874,8 +1874,12 @@ namespace TEN::Renderer
 					const auto& zones = GetRuntimeZoneTable((int)zoneType);
 
 					PrintDebugMessage("Player zone number: %d", playerBoxID == NO_VALUE ? NO_VALUE : zones[playerBoxID]);
+					PrintDebugMessage(" ");
 					PrintDebugMessage("Enemy: %s", enemy.Name.c_str());
 					PrintDebugMessage("Enemy box number: %d", enemy.BoxNumber);
+					int exitBox = enemy.BoxNumber >= 0 && enemy.BoxNumber < (int)creatureInfo->LOT.Node.size() ?
+						creatureInfo->LOT.Node[enemy.BoxNumber].exitBox : NO_VALUE;
+					PrintDebugMessage("Enemy exit-box number: %d", exitBox);
 					PrintDebugMessage("Enemy zone type: %d", zoneType);
 					PrintDebugMessage("Enemy zone number: %d", enemy.BoxNumber == NO_VALUE ? NO_VALUE : zones[enemy.BoxNumber]);
 

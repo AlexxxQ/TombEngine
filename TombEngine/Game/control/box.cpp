@@ -76,7 +76,7 @@ static bool OverlapActiveForEdge(int overlapFlags);
 static bool TryGetCompiledOverlap(int fromBox, int toBox, int& flags, int* heightDelta = nullptr);
 static bool TryResolveRouteExitFloorAtVerticalPortal(ItemInfo* item, LOTInfo* LOT, const int* zone,
 	int currentBox, int boxHeight, FloorInfo*& floor, int& floorBox, short& roomNumber, int& height);
-static void EnsureDebugBoxVerticalBounds();
+static void EnsureDebugBoxVolumes();
 
 struct ReversePathEdge
 {
@@ -101,14 +101,37 @@ constexpr auto CREATURE_FLY_SMOOTH_FACTOR = 0.1f;			// Smoothing factor for fly/
 
 int PathfindingDisplayIndex = NO_VALUE;
 
-struct DebugBoxVerticalBounds
+struct DebugBoxVolume
 {
+	int MinX = INT_MAX;
+	int MaxX = INT_MIN;
+	int MinZ = INT_MAX;
+	int MaxZ = INT_MIN;
 	int Top = NO_HEIGHT;
 	int Bottom = NO_HEIGHT;
+	short RoomNumber = NO_VALUE;
+
+	bool Contains(const Vector3& position) const
+	{
+		return position.x >= MinX && position.x <= MaxX &&
+			position.y >= Top && position.y <= Bottom &&
+			position.z >= MinZ && position.z <= MaxZ;
+	}
+
+	Vector3 GetCenter() const
+	{
+		return { (MinX + MaxX) / 2.0f, (Top + Bottom) / 2.0f, (MinZ + MaxZ) / 2.0f };
+	}
+
+	Vector3 GetExtents() const
+	{
+		return { (MaxX - MinX) * 0.49f, (Bottom - Top) * 0.49f, (MaxZ - MinZ) * 0.49f };
+	}
 };
 
-static std::vector<DebugBoxVerticalBounds> s_debugBoxVerticalBounds;
-static bool s_debugBoxVerticalBoundsDirty = true;
+static std::vector<std::vector<DebugBoxVolume>> s_debugBoxVolumes;
+static std::vector<int> s_debugDisplayBoxes;
+static bool s_debugBoxVolumesDirty = true;
 
 bool CanCreatureLand(const ItemInfo& item)
 {
@@ -182,14 +205,28 @@ static Vector3 GetBoxCenter(int boxIndex)
 static Vector3 GetDebugBoxCenter(int boxIndex)
 {
 	auto center = GetBoxCenter(boxIndex);
-	if (boxIndex >= 0 && boxIndex < (int)s_debugBoxVerticalBounds.size())
+	if (boxIndex >= 0 && boxIndex < (int)s_debugBoxVolumes.size())
 	{
-		const auto& bounds = s_debugBoxVerticalBounds[boxIndex];
-		if (bounds.Top != NO_HEIGHT && bounds.Bottom != NO_HEIGHT && bounds.Top < bounds.Bottom)
-			center.y = (bounds.Top + bounds.Bottom) / 2.0f;
+		int height = g_Level.PathfindingBoxes[boxIndex].height;
+		for (const auto& volume : s_debugBoxVolumes[boxIndex])
+		{
+			if (volume.Top <= height && height <= volume.Bottom)
+			{
+				center.y = volume.GetCenter().y;
+				break;
+			}
+		}
 	}
 
 	return center;
+}
+
+static int ResolveDebugDisplayBox(int boxIndex)
+{
+	if (boxIndex < 0 || boxIndex >= (int)s_debugDisplayBoxes.size())
+		return boxIndex;
+
+	return s_debugDisplayBoxes[boxIndex];
 }
 
 static Vector3 GetDebugPathNodeCenter(int boxIndex, const LOTInfo& lot, int targetY)
@@ -201,69 +238,162 @@ static Vector3 GetDebugPathNodeCenter(int boxIndex, const LOTInfo& lot, int targ
 	return center;
 }
 
+static void DrawDebugBoxShape(const Vector3& center, const Vector3& extents, const Vector3& color)
+{
+	auto debugBox = BoundingOrientedBox(center, extents, Vector4::UnitY);
+	for (int i = 0; i <= 10; i++)
+	{
+		debugBox.Extents = extents + Vector3(i);
+		DrawDebugBox(debugBox, Vector4(color.x, color.y, color.z, 1), RendererDebugPage::PathfindingStats);
+	}
+}
+
 static void DrawBox(int boxIndex, const Vector3& color)
 {
 	if (boxIndex <= NO_VALUE || boxIndex >= g_Level.PathfindingBoxes.size())
 		return;
 
-	auto& currBox = g_Level.PathfindingBoxes[boxIndex];
-
-	auto center = GetDebugBoxCenter(boxIndex);
-	auto corner = Vector3(currBox.bottom * BLOCK(1), currBox.height + CLICK(1), currBox.right * BLOCK(1));
-	auto extents = (corner - center) * 0.98f;
-	if (boxIndex < (int)s_debugBoxVerticalBounds.size())
+	if (boxIndex < (int)s_debugBoxVolumes.size() && !s_debugBoxVolumes[boxIndex].empty())
 	{
-		const auto& bounds = s_debugBoxVerticalBounds[boxIndex];
-		if (bounds.Top != NO_HEIGHT && bounds.Bottom != NO_HEIGHT && bounds.Top < bounds.Bottom)
-			extents.y = (bounds.Bottom - bounds.Top) * 0.49f;
-	}
-	auto dBox = BoundingOrientedBox(center, extents, Vector4::UnitY);
+		bool drewVolume = false;
+		int height = g_Level.PathfindingBoxes[boxIndex].height;
+		for (const auto& volume : s_debugBoxVolumes[boxIndex])
+		{
+			if (height < volume.Top || height > volume.Bottom)
+				continue;
 
-	for (int i = 0; i <= 10; i++)
-	{
-		dBox.Extents = extents + Vector3(i);
-		DrawDebugBox(dBox, Vector4(color.x, color.y, color.z, 1), RendererDebugPage::PathfindingStats);
+			DrawDebugBoxShape(volume.GetCenter(), volume.GetExtents(), color);
+			drewVolume = true;
+		}
+
+		if (drewVolume)
+			return;
 	}
+
+	const auto& box = g_Level.PathfindingBoxes[boxIndex];
+	auto center = GetBoxCenter(boxIndex);
+	auto corner = Vector3(box.bottom * BLOCK(1), box.height + CLICK(1), box.right * BLOCK(1));
+	DrawDebugBoxShape(center, (corner - center) * 0.98f, color);
+}
+
+static void DrawDebugBoxVolume(int boxIndex, const DebugBoxVolume& volume, const Vector3& color)
+{
+	auto center = volume.GetCenter();
+	DrawDebugBoxShape(center, volume.GetExtents(), color);
+	DrawDebugString(fmt::format("Box {}", boxIndex), center, Vector4::One, RendererDebugPage::PathfindingStats);
+}
+
+static bool LaraDebugVolumesAdjacent(const DebugBoxVolume& first, const DebugBoxVolume& second)
+{
+	auto overlaps = [](int minA, int maxA, int minB, int maxB)
+	{
+		return std::min(maxA, maxB) > std::max(minA, minB);
+	};
+	auto touches = [](int minA, int maxA, int minB, int maxB)
+	{
+		return std::abs(maxA - minB) <= 1 || std::abs(maxB - minA) <= 1;
+	};
+
+	return (touches(first.MinX, first.MaxX, second.MinX, second.MaxX) &&
+		overlaps(first.Top, first.Bottom, second.Top, second.Bottom) && overlaps(first.MinZ, first.MaxZ, second.MinZ, second.MaxZ)) ||
+		(touches(first.Top, first.Bottom, second.Top, second.Bottom) &&
+			overlaps(first.MinX, first.MaxX, second.MinX, second.MaxX) && overlaps(first.MinZ, first.MaxZ, second.MinZ, second.MaxZ)) ||
+		(touches(first.MinZ, first.MaxZ, second.MinZ, second.MaxZ) &&
+			overlaps(first.MinX, first.MaxX, second.MinX, second.MaxX) && overlaps(first.Top, first.Bottom, second.Top, second.Bottom));
+}
+
+static const DebugBoxVolume* FindDebugBoxVolume(
+	int boxIndex, short roomNumber, const DebugBoxVolume* adjacentTo = nullptr)
+{
+	if (boxIndex < 0 || boxIndex >= (int)s_debugBoxVolumes.size())
+		return nullptr;
+
+	for (const auto& volume : s_debugBoxVolumes[boxIndex])
+	{
+		if (volume.RoomNumber == roomNumber)
+			return !adjacentTo || LaraDebugVolumesAdjacent(*adjacentTo, volume) ? &volume : nullptr;
+	}
+
+	if (adjacentTo)
+	{
+		for (const auto& volume : s_debugBoxVolumes[boxIndex])
+		{
+			if (LaraDebugVolumesAdjacent(*adjacentTo, volume))
+				return &volume;
+		}
+	}
+
+	return nullptr;
 }
 
 void DrawLaraPathfinding(int boxIndex)
 {
-	if (boxIndex <= NO_VALUE || boxIndex >= g_Level.PathfindingBoxes.size())
+	EnsureDebugBoxVolumes();
+
+	if (LaraItem->RoomNumber < 0 || LaraItem->RoomNumber >= (int)g_Level.Rooms.size())
 		return;
 
-	auto& currBox = g_Level.PathfindingBoxes[boxIndex];
-	auto index = currBox.overlapIndex;
+	short currentRoomNumber = LaraItem->RoomNumber;
+	const auto& laraPosition = LaraItem->Pose.Position;
+	int localBox = TEN::Collision::Floordata::GetFloor(
+		currentRoomNumber, laraPosition.x, laraPosition.z).PathfindingBoxID;
+	if (localBox >= 0 && localBox < (int)g_Level.PathfindingBoxes.size() && IsBoxUsableNow(localBox))
+		boxIndex = localBox;
 
-	// Current box color based on flags.
-	auto currentBoxColor = Vector3(0.0f, 1.0f, 1.0f);
-	if (currBox.flags & BLOCKABLE)
-		currentBoxColor = (currBox.flags & BLOCKED) ? Vector3(1.0f, 0.0f, 0.0f) : Vector3(0.0f, 1.0f, 0.0f);
-
-	DrawBox(boxIndex, currentBoxColor);
-
-	if (!IsBoxUsableNow(boxIndex))
+	if (boxIndex <= NO_VALUE || boxIndex >= g_Level.PathfindingBoxes.size() || !IsBoxUsableNow(boxIndex))
 		return;
 
-	// Show only overlaps active for the current flip-group combination.
+	const auto* currentVolume = FindDebugBoxVolume(boxIndex, currentRoomNumber);
+	if (!currentVolume)
+		return;
 
-	// Draw overlapping boxes.
-	while (index >= 0)
+	DrawDebugBoxVolume(boxIndex, *currentVolume, Vector3(0, 1, 1));
+
+	std::unordered_map<int, short> neighbors;
+	int index = g_Level.PathfindingBoxes[boxIndex].overlapIndex;
+	while (index >= 0 && index < (int)g_Level.Overlaps.size())
 	{
-		if (index >= g_Level.Overlaps.size())
-			break;
-
-		auto overlap = g_Level.Overlaps[index];
-
-		int overlapBox = overlap.box;
-		if (IsBoxUsableNow(overlapBox) && OverlapActiveForEdge(overlap.flags))
-			DrawBox(overlapBox, Vector3(1, 1, 0));
+		const auto& overlap = g_Level.Overlaps[index++];
+		if (IsBoxUsableNow(overlap.box) && OverlapActiveForEdge(overlap.flags))
+			neighbors.try_emplace(overlap.box, NO_VALUE);
 
 		if (overlap.flags & OVERLAP_END_BIT)
 			break;
-		else
-			index++;
 	}
 
+	const auto& currentRoom = g_Level.Rooms[currentVolume->RoomNumber];
+	for (const auto& sector : currentRoom.Sectors)
+	{
+		if (sector.PathfindingBoxID != boxIndex)
+			continue;
+
+		int x = sector.Position.x + BLOCK(0.5f);
+		int z = sector.Position.y + BLOCK(0.5f);
+		for (bool isBelow : { false, true })
+		{
+			auto adjacentRoom = sector.GetNextRoomNumber(x, z, isBelow);
+			if (!adjacentRoom || *adjacentRoom < 0 || *adjacentRoom >= (int)g_Level.Rooms.size() ||
+				!g_Level.Rooms[*adjacentRoom].Active())
+				continue;
+
+			int adjacentBox = TEN::Collision::Floordata::GetFloor(*adjacentRoom, x, z).PathfindingBoxID;
+			if (adjacentBox < 0 || adjacentBox >= (int)g_Level.PathfindingBoxes.size() ||
+				adjacentBox == boxIndex || !IsBoxUsableNow(adjacentBox))
+				continue;
+
+			neighbors[adjacentBox] = (short)*adjacentRoom;
+		}
+	}
+
+	for (const auto& [neighbor, verticalRoom] : neighbors)
+	{
+		const DebugBoxVolume* volume = verticalRoom != NO_VALUE ?
+			FindDebugBoxVolume(neighbor, verticalRoom) :
+			FindDebugBoxVolume(neighbor, currentRoomNumber, currentVolume);
+
+		if (volume)
+			DrawDebugBoxVolume(neighbor, *volume, Vector3(1, 1, 0));
+	}
 }
 
 void DrawItemPathfinding(int itemNumber)
@@ -291,11 +421,11 @@ void DrawItemPathfinding(int itemNumber)
 
 	// Blue box: TargetBox (pathfinding destination).
 	if (targetBox != NO_VALUE)
-		DrawBox(targetBox, Vector3(0, 0, 1));
+		DrawBox(ResolveDebugDisplayBox(targetBox), Vector3(0, 0, 1));
 
 	// Cyan box: RequiredBox (if different from TargetBox).
 	if (requiredBox != NO_VALUE && requiredBox != targetBox)
-		DrawBox(requiredBox, Vector3(0, 1, 1));
+		DrawBox(ResolveDebugDisplayBox(requiredBox), Vector3(0, 1, 1));
 
 	if (itemBox == NO_VALUE || targetBox == NO_VALUE)
 		return;
@@ -342,8 +472,8 @@ void DrawItemPathfinding(int itemNumber)
 			nextBox = NO_VALUE;
 		}
 
-		auto& box = g_Level.PathfindingBoxes[currentBox];
-		auto center = GetDebugPathNodeCenter(currentBox, LOT, creature->Target.y);
+		int displayBox = ResolveDebugDisplayBox(currentBox);
+		auto center = GetDebugPathNodeCenter(displayBox, LOT, creature->Target.y);
 
 		bool blink = blinkingBox != NO_VALUE;
 		auto color = blink ? Vector4(1, 0, 0, 1) : Vector4::One;
@@ -351,7 +481,7 @@ void DrawItemPathfinding(int itemNumber)
 
 		// Red box: intermediate box between current creature position and target.
 		if (currentBox != itemBox)
-			DrawBox(currentBox, Vector3(1, 0, 0));
+			DrawBox(displayBox, Vector3(1, 0, 0));
 
 		// Draw intermediate box node.
 		if (currentBox != requiredBox && currentBox != itemBox)
@@ -359,7 +489,7 @@ void DrawItemPathfinding(int itemNumber)
 			DrawDebugSphere(center, INTERMEDIATE_NODE_RADIUS, Vector4::One, RendererDebugPage::PathfindingStats);
 
 			if ((currentBox != blinkingBox) || !bypassPathDrawing)
-				DrawDebugString(fmt::format("Box {}", currentBox), center, Vector4::One, RendererDebugPage::PathfindingStats);
+				DrawDebugString(fmt::format("Box {}", displayBox), center, Vector4::One, RendererDebugPage::PathfindingStats);
 		}
 
 		Vector3 lineStart, lineEnd;
@@ -392,7 +522,7 @@ void DrawItemPathfinding(int itemNumber)
 			{
 				// Creature line.
 				lineStart = source;
-				lineEnd = GetDebugPathNodeCenter(nextBox, LOT, creature->Target.y);
+				lineEnd = GetDebugPathNodeCenter(ResolveDebugDisplayBox(nextBox), LOT, creature->Target.y);
 			}
 		}
 
@@ -452,8 +582,6 @@ void CyclePathfindingDisplay()
 
 void DrawPathfindingDebug(int laraBoxIndex)
 {
-	EnsureDebugBoxVerticalBounds();
-
 	auto creatures = GetActiveCreatures();
 
 	if (PathfindingDisplayIndex < 0 || creatures.empty())
@@ -463,6 +591,8 @@ void DrawPathfindingDebug(int laraBoxIndex)
 	}
 	else
 	{
+		EnsureDebugBoxVolumes();
+
 		// Show selected creature's pathfinding.
 		int creatureIndex = PathfindingDisplayIndex;
 		if (creatureIndex >= (int)creatures.size())
@@ -2040,7 +2170,6 @@ bool SearchLOT(LOTInfo* LOT, int depth)
 
 static std::vector<int>         s_runtimeZones[(int)ZoneType::MaxZone];
 static std::vector<char>        s_runtimeActiveBoxes; // boxes present in currently active room-sector data
-
 static std::vector<std::vector<ReversePathEdge>> s_reverseEdges; // per target box: boxes that can move forward into it
 
 static int ResolveCreatureCurrentBox(ItemInfo* item, LOTInfo* lot = nullptr, bool preserveRouteBox = false)
@@ -2169,19 +2298,21 @@ static bool TryGetCompiledOverlap(int fromBox, int toBox, int& flags, int* heigh
 	return false;
 }
 
-static void RebuildDebugBoxVerticalBounds()
+static void RebuildDebugBoxVolumes()
 {
-	s_debugBoxVerticalBounds.assign(g_Level.PathfindingBoxes.size(), {});
+	s_debugBoxVolumes.assign(g_Level.PathfindingBoxes.size(), {});
+	s_debugDisplayBoxes.resize(g_Level.PathfindingBoxes.size());
 
 	for (const auto& room : g_Level.Rooms)
 	{
 		if (!room.Active())
 			continue;
 
+		std::unordered_map<int, DebugBoxVolume> roomVolumes;
 		for (const auto& sector : room.Sectors)
 		{
 			int box = sector.PathfindingBoxID;
-			if (box < 0 || box >= (int)s_debugBoxVerticalBounds.size())
+			if (box < 0 || box >= (int)s_debugBoxVolumes.size())
 				continue;
 
 			int x0 = sector.Position.x + 1;
@@ -2194,31 +2325,133 @@ static void RebuildDebugBoxVerticalBounds()
 				Vector2i(x1, z1), Vector2i(x0, z1)
 			};
 
-			auto& bounds = s_debugBoxVerticalBounds[box];
+			auto& volume = roomVolumes[box];
+			volume.RoomNumber = sector.RoomNumber;
+			volume.MinX = std::min(volume.MinX, sector.Position.x);
+			volume.MaxX = std::max(volume.MaxX, sector.Position.x + BLOCK(1));
+			volume.MinZ = std::min(volume.MinZ, sector.Position.y);
+			volume.MaxZ = std::max(volume.MaxZ, sector.Position.y + BLOCK(1));
+
 			for (const auto& sample : samples)
 			{
-				auto location = RoomVector(sector.RoomNumber, g_Level.PathfindingBoxes[box].height);
-				int ceiling = TEN::Collision::Floordata::GetSurfaceHeight(
-					location, sample.x, sample.y, false).value_or(NO_HEIGHT);
-				int floor = TEN::Collision::Floordata::GetSurfaceHeight(
-					location, sample.x, sample.y, true).value_or(NO_HEIGHT);
+				auto position = Vector3i(sample.x, g_Level.PathfindingBoxes[box].height, sample.y);
+				int ceiling = sector.GetSurfaceHeight(position, false);
+				int floor = sector.GetSurfaceHeight(position, true);
 
 				if (ceiling != NO_HEIGHT)
-					bounds.Top = bounds.Top == NO_HEIGHT ? ceiling : std::min(bounds.Top, ceiling);
+					volume.Top = volume.Top == NO_HEIGHT ? ceiling : std::min(volume.Top, ceiling);
 				if (floor != NO_HEIGHT)
-					bounds.Bottom = bounds.Bottom == NO_HEIGHT ? floor : std::max(bounds.Bottom, floor);
+					volume.Bottom = volume.Bottom == NO_HEIGHT ? floor : std::max(volume.Bottom, floor);
+			}
+		}
+
+		for (auto& [box, volume] : roomVolumes)
+		{
+			if (volume.Top != NO_HEIGHT && volume.Bottom != NO_HEIGHT && volume.Top < volume.Bottom)
+				s_debugBoxVolumes[box].push_back(volume);
+		}
+	}
+
+	for (auto& volumes : s_debugBoxVolumes)
+	{
+		bool changed;
+		do
+		{
+			changed = false;
+			for (int first = 0; first < (int)volumes.size(); first++)
+			{
+				for (int second = first + 1; second < (int)volumes.size(); second++)
+				{
+					auto& a = volumes[first];
+					auto& b = volumes[second];
+					bool sameXZ = a.MinX == b.MinX && a.MaxX == b.MaxX &&
+						a.MinZ == b.MinZ && a.MaxZ == b.MaxZ;
+					if (!sameXZ || a.Bottom < b.Top || b.Bottom < a.Top)
+						continue;
+
+					int top = std::min(a.Top, b.Top);
+					int bottom = std::max(a.Bottom, b.Bottom);
+					changed |= a.Top != top || a.Bottom != bottom || b.Top != top || b.Bottom != bottom;
+					a.Top = b.Top = top;
+					a.Bottom = b.Bottom = bottom;
+				}
+			}
+		}
+		while (changed);
+	}
+
+	auto getSectorKey = [](int x, int z)
+	{
+		int sectorX = (int)std::floor((double)x / BLOCK(1));
+		int sectorZ = (int)std::floor((double)z / BLOCK(1));
+		return ((uint64_t)(uint32_t)sectorX << 32) | (uint32_t)sectorZ;
+	};
+	std::unordered_map<uint64_t, std::vector<int>> boxesBySector;
+	for (int boxIndex = 0; boxIndex < (int)s_debugBoxVolumes.size(); boxIndex++)
+	{
+		if (!IsBoxUsableNow(boxIndex))
+			continue;
+
+		for (const auto& volume : s_debugBoxVolumes[boxIndex])
+		{
+			int minX = (int)std::floor((double)volume.MinX / BLOCK(1));
+			int maxX = (int)std::floor((double)volume.MaxX / BLOCK(1));
+			int minZ = (int)std::floor((double)volume.MinZ / BLOCK(1));
+			int maxZ = (int)std::floor((double)volume.MaxZ / BLOCK(1));
+			for (int x = minX; x <= maxX; x++)
+			{
+				for (int z = minZ; z <= maxZ; z++)
+				{
+					auto& boxes = boxesBySector[((uint64_t)(uint32_t)x << 32) | (uint32_t)z];
+					if (boxes.empty() || boxes.back() != boxIndex)
+						boxes.push_back(boxIndex);
+				}
 			}
 		}
 	}
+
+	for (int boxIndex = 0; boxIndex < (int)g_Level.PathfindingBoxes.size(); boxIndex++)
+	{
+		const auto& routeBox = g_Level.PathfindingBoxes[boxIndex];
+		auto center = GetBoxCenter(boxIndex);
+		center.y = (float)routeBox.height;
+		int bestBox = boxIndex;
+		int bestHeightDelta = INT_MAX;
+
+		auto candidates = boxesBySector.find(getSectorKey((int)center.x, (int)center.z));
+		if (candidates == boxesBySector.end())
+		{
+			s_debugDisplayBoxes[boxIndex] = bestBox;
+			continue;
+		}
+
+		for (int candidate : candidates->second)
+		{
+			for (const auto& volume : s_debugBoxVolumes[candidate])
+			{
+				if (!volume.Contains(center))
+					continue;
+
+				int heightDelta = std::abs(g_Level.PathfindingBoxes[candidate].height - routeBox.height);
+				if (heightDelta < bestHeightDelta)
+				{
+					bestBox = candidate;
+					bestHeightDelta = heightDelta;
+				}
+			}
+		}
+
+		s_debugDisplayBoxes[boxIndex] = bestBox;
+	}
 }
 
-static void EnsureDebugBoxVerticalBounds()
+static void EnsureDebugBoxVolumes()
 {
-	if (!s_debugBoxVerticalBoundsDirty)
+	if (!s_debugBoxVolumesDirty)
 		return;
 
-	RebuildDebugBoxVerticalBounds();
-	s_debugBoxVerticalBoundsDirty = false;
+	RebuildDebugBoxVolumes();
+	s_debugBoxVolumesDirty = false;
 }
 
 static std::vector<char> BuildActiveBoxSet()
@@ -2317,7 +2550,7 @@ void RecomputeRuntimeZones(bool applySectorVariants)
 		ApplyCompiledSectorBoxVariants();
 
 	s_runtimeActiveBoxes = BuildActiveBoxSet();
-	s_debugBoxVerticalBoundsDirty = true;
+	s_debugBoxVolumesDirty = true;
 
 	std::vector<int> stack;
 	for (int zoneType = 0; zoneType < (int)ZoneType::MaxZone; zoneType++)
