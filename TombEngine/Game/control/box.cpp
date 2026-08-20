@@ -4227,12 +4227,11 @@ TARGET_TYPE CalculateTarget(Vector3i* target, ItemInfo* item, LOTInfo* LOT)
 	int routeDirectionZ = 0;
 	bool firstRouteBox = true;
 	int firstExitBox = LOT->Node[boxNumber].exitBox;
-	bool descendingToExitBox = LOT->Zone == ZoneType::Flyer &&
-		LOT->Target.y > item->Pose.Position.y &&
+	bool descendingToExitBox = LOT->Fly != NO_FLYING &&
 		firstExitBox >= 0 && firstExitBox < (int)g_Level.PathfindingBoxes.size() &&
 		g_Level.PathfindingBoxes[firstExitBox].height > box->height;
 	if (descendingToExitBox)
-		target->y = std::min(LOT->Target.y, g_Level.PathfindingBoxes[firstExitBox].height - BLOCK(1));
+		target->y = g_Level.PathfindingBoxes[firstExitBox].height - BLOCK(1);
 
 	// Safety limit to prevent infinite loops from corrupted exitBox chains.
 	int maxIterations = (int)g_Level.PathfindingBoxes.size();
