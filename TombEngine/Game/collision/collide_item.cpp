@@ -2024,7 +2024,13 @@ void CreatureCollision(short itemNumber, ItemInfo* laraItem, CollisionInfo* coll
 		return;
 
 	bool doPlayerCollision = laraItem->IsLara();
-	bool waterPlayerCollision = doPlayerCollision && GetLaraInfo(laraItem)->Control.WaterStatus >= WaterStatus::TreadWater;
+	auto waterStatus = doPlayerCollision ? GetLaraInfo(laraItem)->Control.WaterStatus : WaterStatus::Dry;
+	bool waterPlayerCollision = doPlayerCollision && waterStatus >= WaterStatus::TreadWater;
+	bool laraIsSwimming = waterStatus == WaterStatus::TreadWater || waterStatus == WaterStatus::Underwater;
+
+	// Preserve contact bits, but don't physically push Lara while both actors are using water movement.
+	if (laraIsSwimming && Objects[item->ObjectNumber].WaterCreature())
+		return;
 
 	if (waterPlayerCollision || coll->Setup.EnableObjectPush)
 	{
