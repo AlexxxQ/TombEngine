@@ -31,6 +31,7 @@
 #include "Objects/Generic/Object/objects.h"
 #include "Objects/Generic/Switches/generic_switch.h"
 #include "Objects/Generic/Switches/switch.h"
+#include "Renderer/Renderer.h"
 #include "Sound/sound.h"
 #include "Specific/clock.h"
 #include "Specific/Input/Input.h"
@@ -50,6 +51,7 @@ using namespace TEN::Effects::Splash;
 using namespace TEN::Entities::Switches;
 using namespace TEN::Input;
 using namespace TEN::Math;
+using TEN::Renderer::g_Renderer;
 
 constexpr auto TRIGGER_TIMEOUT		 = 5;
 constexpr auto GRENADE_FRAG_TIMEOUT  = 4;
@@ -73,6 +75,12 @@ constexpr auto HK_BURST_AND_SNIPER_MODE_SHOT_INTERVAL = 12.0f;
 constexpr auto HK_RAPID_MODE_SHOT_INTERVAL			  = 3.0f;
 
 constexpr auto SHOTGUN_PELLET_COUNT = 6;
+
+static void UpdateProjectileMuzzleTransform()
+{
+	// Aim rotations are applied after AnimateItem(), so refresh cached bone transforms before reading the muzzle position.
+	g_Renderer.UpdateLaraAnimations(true);
+}
 
 void AnimateShotgun(ItemInfo& laraItem, LaraWeaponType weaponType)
 {
@@ -643,6 +651,8 @@ bool FireHarpoon(ItemInfo& laraItem, const std::optional<Pose>& pose)
 	}
 	else
 	{
+		UpdateProjectileMuzzleTransform();
+
 		auto offset = g_GameFlow->GetSettings()->Weapons[(int)LaraWeaponType::HarpoonGun - 1].MuzzleOffset.ToVector3i();
 		auto jointPos = GetJointPosition(&laraItem, LM_RHAND, offset);
 		harpoonItem.RoomNumber = laraItem.RoomNumber;
@@ -733,6 +743,8 @@ bool FireGrenade(ItemInfo& laraItem)
 	grenadeItem.Model.Color = NEUTRAL_COLOR;
 	grenadeItem.ObjectNumber = ID_GRENADE;
 	grenadeItem.RoomNumber = laraItem.RoomNumber;
+
+	UpdateProjectileMuzzleTransform();
 
 	auto offset = g_GameFlow->GetSettings()->Weapons[(int)LaraWeaponType::GrenadeLauncher - 1].MuzzleOffset.ToVector3i();
 	auto jointPos = GetJointPosition(&laraItem, LM_RHAND, offset);
@@ -924,6 +936,8 @@ bool FireRocket(ItemInfo& laraItem)
 	if (!ammo.HasInfinite())
 		ammo--;
 
+	UpdateProjectileMuzzleTransform();
+
 	auto offset = g_GameFlow->GetSettings()->Weapons[(int)LaraWeaponType::RocketLauncher - 1].MuzzleOffset.ToVector3i();
 	auto jointPos = GetJointPosition(&laraItem, LM_RHAND, offset);
 
@@ -1073,6 +1087,8 @@ bool FireCrossbow(ItemInfo& laraItem, const std::optional<Pose>& pose)
 	}
 	else
 	{
+		UpdateProjectileMuzzleTransform();
+
 		auto jointPos = GetJointPosition(&laraItem, LM_RHAND, Vector3i(0, 228, 32));
 
 		boltItem.RoomNumber = laraItem.RoomNumber;
