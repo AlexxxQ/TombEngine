@@ -2028,30 +2028,17 @@ void SpawnPlayerWaterSurfaceEffects(const ItemInfo& item, int waterHeight, int w
 		item.Animation.Velocity.y > 0.0f && SplashCount == 0 &&
 		player.Control.WaterStatus != WaterStatus::TreadWater)
 	{
-		SplashSetup.Position = Vector3(item.Pose.Position.x, waterHeight - 1, item.Pose.Position.z);
-		SplashSetup.InnerRadius = 16;
-		SplashSetup.SplashPower = item.Animation.Velocity.z;
-
-		SetupSplash(&SplashSetup, pointColl0.GetRoomNumber());
+		SpawnPlayerWaterEntrySplash(
+			item, pointColl0.GetRoomNumber(), pointColl1.GetRoomNumber(),
+			item.Animation.Velocity.y);
 		SplashCount = 16;
 	}
 	// Spawn ripple.
 	else if (isWater1)
 	{
-		if (Wibble & 0xF)
-			return;
-
-		if (Random::TestProbability(1 / 2000.0f) && item.Animation.ActiveState == LS_IDLE)
-			return;
-
-		int flags = (item.Animation.ActiveState == LS_IDLE) ?
-			(int)RippleFlags::LowOpacity :
-			(int)RippleFlags::SlowFade | (int)RippleFlags::LowOpacity;
-
-		SpawnRipple(
-			Vector3(item.Pose.Position.x, waterHeight - 1, item.Pose.Position.z),
-			item.RoomNumber, Random::GenerateFloat(112.0f, 128.0f),
-			flags);
+		SpawnWadeWaterEffects(
+			item, pointColl1.GetRoomNumber(), waterHeight,
+			item.Animation.ActiveState == LS_IDLE);
 	}
 }
 

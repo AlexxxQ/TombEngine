@@ -42,6 +42,7 @@
 #include "Game/control/control.h"
 #include "Game/control/lot.h"
 #include "Game/effects/smoke.h"
+#include "Game/effects/Splash.h"
 #include "Game/effects/tomb4fx.h"
 #include "Game/itemdata/creature_info.h"
 #include "Game/Lara/lara.h"
@@ -64,6 +65,7 @@ using namespace TEN::Animation;
 using namespace TEN::Collision::Point;
 using namespace TEN::Collision::Room;
 using namespace TEN::Effects::Smoke;
+using namespace TEN::Effects::Splash;
 using namespace TEN::Utils;
 
 using PathQueue = std::priority_queue<QueueElement, std::vector<QueueElement>, std::greater<QueueElement>>;
@@ -1168,7 +1170,20 @@ bool CreaturePathfind(ItemInfo* item, Vector3i prevPos, short angle, short tilt)
 		item->Pose.Orientation.x = 0;
 	}
 
-	UpdateItemRoom(item->Index);
+	short sourceRoomNumber = item->RoomNumber;
+	short resolvedRoomNumber = sourceRoomNumber;
+	UpdateItemRoom(item->Index, &resolvedRoomNumber);
+
+	if (item->Animation.IsAirborne)
+		SpawnWaterEntrySplash(*item, sourceRoomNumber, resolvedRoomNumber, item->Animation.Velocity.y);
+
+	const auto& object = Objects[item->ObjectNumber];
+	int deltaX = item->Pose.Position.x - prevPos.x;
+	int deltaZ = item->Pose.Position.z - prevPos.z;
+	bool hasMoved = (SQUARE(deltaX) + SQUARE(deltaZ)) > SQUARE(4);
+
+	if (item->HitPoints > 0 && !item->Animation.IsAirborne && !object.WaterCreature())
+		SpawnWadeWaterEffects(*item, resolvedRoomNumber, NO_HEIGHT, !hasMoved);
 
 	return true;
 }

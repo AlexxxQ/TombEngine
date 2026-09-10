@@ -5,12 +5,14 @@
 #include "Game/collision/collide_room.h"
 #include "Game/collision/Point.h"
 #include "Game/control/control.h"
+#include "Game/effects/Splash.h"
 #include "Game/items.h"
 #include "Game/Lara/lara.h"
 #include "Specific/level.h"
 
 using namespace TEN::Animation;
 using namespace TEN::Collision::Point;
+using namespace TEN::Effects::Splash;
 
 namespace TEN::Entities::Traps
 {
@@ -44,7 +46,10 @@ namespace TEN::Entities::Traps
 			item.Floor = pointColl.GetFloorHeight();
 
 			if (pointColl.GetRoomNumber() != item.RoomNumber)
+			{
+				SpawnWaterEntrySplash(item, item.RoomNumber, pointColl.GetRoomNumber(), item.Animation.Velocity.y);
 				ItemNewRoom(itemNumber, pointColl.GetRoomNumber());
+			}
 
 			if (item.Animation.ActiveState == 1)
 			{

@@ -222,16 +222,12 @@ void ControlBodyPart(short fxNumber)
 
 	if (pointColl.GetRoomNumber() != fx.RoomNumber)
 	{
-		if (TestEnvironment(RoomEnvFlags::ENV_FLAG_WATER, pointColl.GetRoomNumber()) &&
-			!TestEnvironment(RoomEnvFlags::ENV_FLAG_WATER, fx.RoomNumber))
+		bool enteredWater = TestEnvironment(RoomEnvFlags::ENV_FLAG_WATER, pointColl.GetRoomNumber()) &&
+			!TestEnvironment(RoomEnvFlags::ENV_FLAG_WATER, fx.RoomNumber);
+		SpawnWaterEntrySplash(fx, fx.RoomNumber, pointColl.GetRoomNumber(), fx.Animation.Velocity.y);
+
+		if (enteredWater)
 		{
-			int waterHeight = GetPointCollision(fx.Pose.Position, pointColl.GetRoomNumber()).GetWaterTopHeight();
-
-			SplashSetup.Position = Vector3(fx.Pose.Position.x, waterHeight - 1, fx.Pose.Position.z);
-			SplashSetup.SplashPower = fx.Animation.Velocity.y;
-			SplashSetup.InnerRadius = 48;
-			SetupSplash(&SplashSetup, pointColl.GetRoomNumber());
-
 			// Remove if touched water.
 			if (fxInfo.Flag2 & BODY_PART_EXPLODE)
 			{

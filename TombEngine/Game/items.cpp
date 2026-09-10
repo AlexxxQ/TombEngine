@@ -773,14 +773,17 @@ void UpdateAllItems()
 	KillMoveItems();
 }
 
-bool UpdateItemRoom(short itemNumber)
+bool UpdateItemRoom(short itemNumber, short* resolvedRoomNumber)
 {
 	auto* item = &g_Level.Items[itemNumber];
 	auto yOffset = GameBoundingBox(item).GetCenter().y;
 
-	auto roomNumber = GetPointCollision(
+	short roomNumber = GetPointCollision(
 		Vector3i(item->Pose.Position.x, item->Pose.Position.y + yOffset, item->Pose.Position.z),
 		item->RoomNumber).GetRoomNumber();
+
+	if (resolvedRoomNumber != nullptr)
+		*resolvedRoomNumber = roomNumber;
 
 	if (roomNumber != item->RoomNumber)
 	{

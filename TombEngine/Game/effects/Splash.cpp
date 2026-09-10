@@ -3,16 +3,50 @@
 
 #include "Game/collision/Point.h"
 #include "Game/effects/drip.h"
+#include "Game/effects/effects.h"
+#include "Game/effects/Ripple.h"
+#include "Game/items.h"
 #include "Game/room.h"
+#include "Math/Objects/GameBoundingBox.h"
 #include "Sound/sound.h"
 
 using namespace TEN::Collision::Point;
 using namespace TEN::Effects::Drip;
+using namespace TEN::Effects::Ripple;
 
 namespace TEN::Effects::Splash
 {
 	constexpr auto SPLASH_DEFAULT_RADIUS = 64;
 	constexpr auto SPLASH_AUDIO_DRIP_COOLDOWN = 16; // Safeguard against stacked splash sound and drip spam.
+	constexpr auto WATER_ENTRY_RADIUS_MIN = 16.0f;
+	constexpr auto WATER_ENTRY_RADIUS_MAX = CLICK(2.0f);
+	constexpr auto WATER_ENTRY_SPLASH_POINT_COUNT_MAX = 3;
+	constexpr auto WATER_ENTRY_SPLASH_SETUP_COUNT_MAX = 2;
+	constexpr auto PLAYER_WATER_ENTRY_RADIUS = 64.0f;
+	constexpr auto PLAYER_WATER_ENTRY_SPLASH_SETUP_COUNT = 3;
+
+	struct WaterEntrySplashPoint
+	{
+		Vector3 Position = Vector3::Zero;
+		float Radius = 0.0f;
+	};
+
+	static std::optional<int> GetWaterEntryHeight(int sourceRoomNumber, int destinationRoomNumber, const Vector3i& position, float verticalVelocity)
+	{
+		if (verticalVelocity <= 0.0f ||
+			TestEnvironment(ENV_FLAG_WATER, sourceRoomNumber) ||
+			!TestEnvironment(ENV_FLAG_WATER, destinationRoomNumber) ||
+			TestEnvironment(ENV_FLAG_SWAMP, destinationRoomNumber))
+		{
+			return std::nullopt;
+		}
+
+		int waterHeight = GetPointCollision(position, destinationRoomNumber).GetWaterTopHeight();
+		if (waterHeight == NO_HEIGHT)
+			return std::nullopt;
+
+		return waterHeight;
+	}
 
 	int	SplashCount; // Lara-specific splash cooldown used when entering water.
 	int	SplashTimeout; // Global cooldown for splash sound and drip spam suppression.
@@ -146,6 +180,128 @@ namespace TEN::Effects::Splash
 
 		for (auto& splash : SplashEffects)
 			splash = {};
+	}
+
+	void SpawnPlayerWaterEntrySplash(const ItemInfo& item, int sourceRoomNumber, int destinationRoomNumber, float verticalVelocity)
+	{
+		auto waterHeight = GetWaterEntryHeight(sourceRoomNumber, destinationRoomNumber, item.Pose.Position, verticalVelocity);
+		if (!waterHeight.has_value())
+			return;
+
+		auto setup = SplashEffectSetup{};
+		setup.Position = Vector3(item.Pose.Position.x, *waterHeight - 1.0f, item.Pose.Position.z);
+		setup.SplashPower = std::clamp(verticalVelocity, WATER_ENTRY_RADIUS_MIN, 256.0f);
+		setup.InnerRadius = PLAYER_WATER_ENTRY_RADIUS;
+		SetupSplash(&setup, destinationRoomNumber, PLAYER_WATER_ENTRY_SPLASH_SETUP_COUNT);
+	}
+
+	void SpawnWaterEntrySplash(const ItemInfo& item, int sourceRoomNumber, int destinationRoomNumber, float verticalVelocity, int splashPointCountMax)
+	{
+		auto waterHeight = GetWaterEntryHeight(sourceRoomNumber, destinationRoomNumber, item.Pose.Position, verticalVelocity);
+		if (!waterHeight.has_value())
+			return;
+
+		auto bounds = item.GetAabb();
+		auto extents = (Vector3)bounds.Extents;
+		float boundsRadius = Vector2(extents.x, extents.z).Length();
+		float radiusLimit = std::clamp(boundsRadius, WATER_ENTRY_RADIUS_MIN, WATER_ENTRY_RADIUS_MAX);
+		float scale = std::max({ item.Pose.Scale.x, item.Pose.Scale.y, item.Pose.Scale.z });
+
+		auto points = std::vector<WaterEntrySplashPoint>{};
+		for (const auto& sphere : item.GetSpheres())
+		{
+			float radius = std::clamp(sphere.Radius * scale, WATER_ENTRY_RADIUS_MIN, radiusLimit);
+			points.push_back({ sphere.Center, radius });
+		}
+
+		if (points.empty())
+			points.push_back({ (Vector3)bounds.Center, radiusLimit });
+
+		std::sort(points.begin(), points.end(), [](const WaterEntrySplashPoint& pointA, const WaterEntrySplashPoint& pointB)
+		{
+			return pointA.Radius > pointB.Radius;
+		});
+
+		splashPointCountMax = std::clamp(splashPointCountMax, 1, WATER_ENTRY_SPLASH_POINT_COUNT_MAX);
+		if (splashPointCountMax == 1)
+			points[0].Position = (Vector3)bounds.Center;
+
+		auto selectedPoints = std::vector<WaterEntrySplashPoint>{};
+
+		for (const auto& point : points)
+		{
+			bool overlapsSelectedPoint = false;
+			for (const auto& selectedPoint : selectedPoints)
+			{
+				float dx = point.Position.x - selectedPoint.Position.x;
+				float dz = point.Position.z - selectedPoint.Position.z;
+				float separation = (point.Radius + selectedPoint.Radius) / 2.0f;
+
+				if ((dx * dx) + (dz * dz) < SQUARE(separation))
+				{
+					overlapsSelectedPoint = true;
+					break;
+				}
+			}
+
+			if (overlapsSelectedPoint)
+				continue;
+
+			selectedPoints.push_back(point);
+			if (selectedPoints.size() >= splashPointCountMax)
+				break;
+		}
+
+		float splashPower = std::clamp(verticalVelocity * 2.0f, WATER_ENTRY_RADIUS_MIN, 256.0f);
+		for (const auto& point : selectedPoints)
+		{
+			auto setup = SplashEffectSetup{};
+			setup.Position = Vector3(point.Position.x, *waterHeight - 1.0f, point.Position.z);
+			setup.SplashPower = splashPower;
+			setup.InnerRadius = point.Radius * Random::GenerateFloat(0.9f, 1.1f);
+			SetupSplash(&setup, destinationRoomNumber, WATER_ENTRY_SPLASH_SETUP_COUNT_MAX);
+		}
+	}
+
+	static bool TestWadeWaterEffectFrame(const ItemInfo& item)
+	{
+		return ((Wibble + ((item.Index & 3) * 4)) & 0xF) == 0;
+	}
+
+	void SpawnWadeWaterEffects(const ItemInfo& item, int roomNumber, int waterHeight, bool isIdle)
+	{
+		if (!TestWadeWaterEffectFrame(item))
+			return;
+
+		auto pointColl = GetPointCollision(item.Pose.Position, roomNumber);
+		roomNumber = pointColl.GetRoomNumber();
+
+		if (!TestEnvironment(ENV_FLAG_WATER, roomNumber) ||
+			TestEnvironment(ENV_FLAG_SWAMP, roomNumber))
+			return;
+
+		if (waterHeight == NO_HEIGHT)
+			waterHeight = pointColl.GetWaterTopHeight();
+
+		if (waterHeight == NO_HEIGHT)
+			return;
+
+		auto bounds = GameBoundingBox(&item);
+		if (item.Pose.Position.y + bounds.Y1 > waterHeight ||
+			item.Pose.Position.y + bounds.Y2 < waterHeight)
+		{
+			return;
+		}
+
+		if (isIdle && !Random::TestProbability(1 / 16.0f))
+			return;
+
+		float radius = Random::GenerateFloat(112.0f, 128.0f);
+		int flags = isIdle ? (int)RippleFlags::LowOpacity : (int)RippleFlags::SlowFade | (int)RippleFlags::LowOpacity;
+
+		SpawnRipple(
+			Vector3(item.Pose.Position.x, waterHeight - 1, item.Pose.Position.z),
+			roomNumber, radius, flags);
 	}
 
 	void Splash(ItemInfo* item)

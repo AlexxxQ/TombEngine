@@ -7,6 +7,7 @@
 #include "Game/collision/collide_room.h"
 #include "Game/collision/Point.h"
 #include "Game/effects/effects.h"
+#include "Game/effects/Splash.h"
 #include "Game/Lara/lara.h"
 #include "Game/Setup.h"
 #include "Math/Math.h"
@@ -15,6 +16,7 @@
 #include "Specific/level.h"
 
 using namespace TEN::Collision::Point;
+using namespace TEN::Effects::Splash;
 using namespace TEN::Math;
 using namespace TEN::Scripting::Properties;
 
@@ -78,9 +80,12 @@ namespace TEN::Entities::Traps
 			auto pointColl = GetPointCollision(item);
 			auto floorY = pointColl.GetFloorHeight();
 
-			int probedRoomNumber = GetPointCollision(item).GetRoomNumber();
+			int probedRoomNumber = pointColl.GetRoomNumber();
 			if (item.RoomNumber != probedRoomNumber)
+			{
+				SpawnWaterEntrySplash(item, item.RoomNumber, probedRoomNumber, item.Animation.Velocity.y);
 				ItemNewRoom(itemNumber, probedRoomNumber);
+			}
 
 			// Impale floor.
 			if (vPos > floorY && item.Animation.TargetState != FALLINGSPIKES_STATE_FLOOR)

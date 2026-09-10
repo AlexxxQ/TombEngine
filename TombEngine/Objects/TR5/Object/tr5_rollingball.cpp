@@ -281,15 +281,7 @@ void RollingBallControl(short itemNumber)
 	auto pointColl = GetPointCollision(*item);
 	if (item->RoomNumber != pointColl.GetRoomNumber())
 	{
-		if (TestEnvironment(RoomEnvFlags::ENV_FLAG_WATER, pointColl.GetRoomNumber()) &&
-			!TestEnvironment(RoomEnvFlags::ENV_FLAG_WATER, item->RoomNumber))
-		{
-			int waterHeight = pointColl.GetWaterTopHeight();
-			SplashSetup.Position = Vector3(item->Pose.Position.x, waterHeight - 1, item->Pose.Position.z);
-			SplashSetup.SplashPower = item->Animation.Velocity.y * 4;
-			SplashSetup.InnerRadius = 160;
-			SetupSplash(&SplashSetup, pointColl.GetRoomNumber());
-		}
+		SpawnWaterEntrySplash(*item, item->RoomNumber, pointColl.GetRoomNumber(), item->Animation.Velocity.y);
 
 		ItemNewRoom(itemNumber, pointColl.GetRoomNumber());
 	}
@@ -437,7 +429,10 @@ void ClassicRollingBallControl(short itemNum)
 		item->Floor = pointColl.GetFloorHeight();
 
 		if (item->RoomNumber != pointColl.GetRoomNumber())
+		{
+			SpawnWaterEntrySplash(*item, item->RoomNumber, pointColl.GetRoomNumber(), item->Animation.Velocity.y);
 			ItemNewRoom(itemNum, pointColl.GetRoomNumber());
+		}
 
 		if (item->Pose.Position.y >= item->Floor - CLICK(1))
 		{

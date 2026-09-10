@@ -239,7 +239,7 @@ short CreateNewEffect(short roomNumber, GAME_OBJECT_ID objectID, const Pose& pos
 void InitializeItem(short itemNumber);
 void InitializeItemArray(int totalItems);
 void KillItem(short itemNumber);
-bool UpdateItemRoom(short itemNumber);
+bool UpdateItemRoom(short itemNumber, short* resolvedRoomNumber = nullptr);
 void UpdateAllItems();
 const std::string& GetObjectName(GAME_OBJECT_ID objectID);
 std::vector<int> FindAllItems(GAME_OBJECT_ID objectID);

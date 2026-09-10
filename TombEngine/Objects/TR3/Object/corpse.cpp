@@ -93,17 +93,12 @@ namespace TEN::Entities::TR3
 			auto pointColl = GetPointCollision(item);
 			if (item.RoomNumber != pointColl.GetRoomNumber())
 			{
-				if (TestEnvironment(RoomEnvFlags::ENV_FLAG_WATER, pointColl.GetRoomNumber()) &&
-					!TestEnvironment(RoomEnvFlags::ENV_FLAG_WATER, item.RoomNumber))
-				{
-					int waterHeight = pointColl.GetWaterTopHeight();
-					SplashSetup.Position = Vector3(item.Pose.Position.x, waterHeight - 1, item.Pose.Position.z);
-					SplashSetup.SplashPower = item.Animation.Velocity.y * 4;
-					SplashSetup.InnerRadius = 160.0f;
+				bool enteredWater = TestEnvironment(RoomEnvFlags::ENV_FLAG_WATER, pointColl.GetRoomNumber()) &&
+					!TestEnvironment(RoomEnvFlags::ENV_FLAG_WATER, item.RoomNumber);
+				SpawnWaterEntrySplash(item, item.RoomNumber, pointColl.GetRoomNumber(), item.Animation.Velocity.y);
 
-					SetupSplash(&SplashSetup, pointColl.GetRoomNumber());
+				if (enteredWater)
 					item.Animation.Velocity.y = 0.0f;
-				}
 
 				ItemNewRoom(itemNumber, pointColl.GetRoomNumber());
 			}

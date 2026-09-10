@@ -40,7 +40,7 @@ namespace TEN::Entities::Traps
 	constexpr auto CRUMBLING_PLATFORM_BUBBLE_SPAWN_CHANCE_MAX = 0.5f; // Higher bubble density near the water surface.
 	constexpr auto CRUMBLING_PLATFORM_BUBBLE_SPAWN_CHANCE_MIN = 0.1f; // Lower bubble density once the platform sinks deeper.
 	constexpr auto CRUMBLING_PLATFORM_BUBBLE_FULL_DENSITY_DEPTH = BLOCK(1.0f); // Depth threshold where bubble spawning switches from max to min density.
-	constexpr auto CRUMBLING_PLATFORM_SPLASH_SETUP_COUNT_MAX = 2; // Per-frame splash slot cap for crumbling platforms to reduce splash pool pressure.
+	constexpr auto CRUMBLING_PLATFORM_SPLASH_POINT_COUNT_MAX = 3;
 
 	enum CrumblingPlatformState
 	{
@@ -199,24 +199,7 @@ namespace TEN::Entities::Traps
 
 			if (item.RoomNumber != probedRoomNumber)
 			{
-				// Spawn splash for each bone of the platform when entering water.
-				if (TestEnvironment(RoomEnvFlags::ENV_FLAG_WATER, probedRoomNumber) &&
-					!TestEnvironment(RoomEnvFlags::ENV_FLAG_WATER, item.RoomNumber))
-				{
-					auto spheres = item.GetSpheres();
-					int waterHeight = GetPointCollision(item.Pose.Position, probedRoomNumber).GetWaterTopHeight();
-
-					for (const auto& sphere : spheres)
-					{
-						SplashSetup.Position = Vector3(sphere.Center.x, (float)(waterHeight - 1), sphere.Center.z);
-						SplashSetup.SplashPower = GenerateFloat(fallVel * 0.5f, fallVel * 2.0f);
-
-						// Legacy assets for crumbling platforms often have oversized spheres that can produce incorrect splash sizes,
-						// so calculate a fallback override radius based on the platform's bounding box extents for such cases.
-						SplashSetup.InnerRadius = (sphere.Radius > extentsLength ? extentsLength / 2.0f : sphere.Radius) * Random::GenerateFloat(0.7f, 1.3f);
-						SetupSplash(&SplashSetup, probedRoomNumber, CRUMBLING_PLATFORM_SPLASH_SETUP_COUNT_MAX);
-					}
-				}
+				SpawnWaterEntrySplash(item, item.RoomNumber, probedRoomNumber, fallVel, CRUMBLING_PLATFORM_SPLASH_POINT_COUNT_MAX);
 
 				ItemNewRoom(itemNumber, probedRoomNumber);
 			}
