@@ -14,7 +14,7 @@ namespace TEN::Effects::Ripple
 
 	std::vector<Ripple> Ripples = {};
 
-	void SpawnRipple(const Vector3& pos, int roomNumber, float size, int flags, const Vector3& normal, const Vector4& color)
+	void SpawnRipple(const Vector3& pos, int roomNumber, float size, int flags, const Vector3& normal, const Vector4& color, float finalSizeScale)
 	{
 		constexpr auto LIFE_WATER_SURFACE_MAX = 1.0f;
 		constexpr auto LIFE_WATER_SURFACE_MIN = LIFE_WATER_SURFACE_MAX / 2;
@@ -22,6 +22,8 @@ namespace TEN::Effects::Ripple
 		constexpr auto LIFE_GROUND_MIN		  = LIFE_GROUND_MAX / 2;
 		constexpr auto FADE_FAST_COEFF		  = 1 / 3.0f;
 		constexpr auto FADE_SLOW_COEFF		  = 0.5f;
+        constexpr auto SIZE_STEP_LARGE = 4.0f;
+        constexpr auto SIZE_STEP_SMALL = 2.0f;
 
 		auto& ripple = GetNewEffect(Ripples, RIPPLE_COUNT_MAX);
 
@@ -38,6 +40,8 @@ namespace TEN::Effects::Ripple
 		ripple.Life =
 		ripple.LifeMax = round(lifeInSec * FPS);
 		ripple.Size = size;
+        float baseSizeStep = (flags & ((int)RippleFlags::SlowFade | (int)RippleFlags::OnGround)) ? SIZE_STEP_SMALL : SIZE_STEP_LARGE;
+        ripple.SizeStep = baseSizeStep + (std::clamp(finalSizeScale, 1.0f, 2.0f) - 1.0f) * (size / ripple.LifeMax + baseSizeStep);
 		ripple.FadeDuration = round(fadeDurationInSec * FPS);
 		ripple.Flags = flags;
 	}
@@ -45,8 +49,6 @@ namespace TEN::Effects::Ripple
 	void UpdateRipples()
 	{
 		constexpr auto RIPPLE_SIZE_MAX = BLOCK(0.5f);
-		constexpr auto SIZE_STEP_LARGE = 4.0f;
-		constexpr auto SIZE_STEP_SMALL = 2.0f;
 
 		if (Ripples.empty())
 			return;
@@ -60,7 +62,7 @@ namespace TEN::Effects::Ripple
 
 			// Update size.
 			if (ripple.Size < RIPPLE_SIZE_MAX)
-				ripple.Size += (ripple.Flags & ((int)RippleFlags::SlowFade | (int)RippleFlags::OnGround)) ? SIZE_STEP_SMALL : SIZE_STEP_LARGE;
+				ripple.Size += ripple.SizeStep;
 
 			float lifeFullOpacity = ripple.LifeMax - (ripple.FadeDuration * 0.75f);
 			float lifeStartFading = ripple.FadeDuration;

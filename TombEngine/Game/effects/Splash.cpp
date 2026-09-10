@@ -265,7 +265,8 @@ namespace TEN::Effects::Splash
 
 	static bool TestWadeWaterEffectFrame(const ItemInfo& item)
 	{
-		return ((Wibble + ((item.Index & 3) * 4)) & 0xF) == 0;
+        // Wibble advances by four per frame: emit once every eight frames.
+        return ((Wibble + ((item.Index & 7) * 4)) & 0x1F) == 0;
 	}
 
 	void SpawnWadeWaterEffects(const ItemInfo& item, int roomNumber, int waterHeight, bool isIdle)
@@ -296,12 +297,15 @@ namespace TEN::Effects::Splash
 		if (isIdle && !Random::TestProbability(1 / 16.0f))
 			return;
 
-		float radius = Random::GenerateFloat(112.0f, 128.0f);
+        constexpr auto WADE_RIPPLE_FULL_SIZE_SPEED = 47.0f;
+        float horizontalSpeed = Vector2(item.Animation.Velocity.x, item.Animation.Velocity.z).Length();
+        float finalSizeScale = 1.0f + std::clamp(horizontalSpeed / WADE_RIPPLE_FULL_SIZE_SPEED, 0.0f, 1.0f);
+        float radius = Random::GenerateFloat(112.0f, 128.0f);
 		int flags = isIdle ? (int)RippleFlags::LowOpacity : (int)RippleFlags::SlowFade | (int)RippleFlags::LowOpacity;
 
 		SpawnRipple(
 			Vector3(item.Pose.Position.x, waterHeight - 1, item.Pose.Position.z),
-			roomNumber, radius, flags);
+			roomNumber, radius, flags, Vector3::Down, RIPPLE_DEFAULT_COLOR, finalSizeScale);
 	}
 
 	void Splash(ItemInfo* item)
