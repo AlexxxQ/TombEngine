@@ -20,7 +20,7 @@ namespace TEN::Effects::Splash
 	constexpr auto SPLASH_AUDIO_DRIP_COOLDOWN = 16; // Safeguard against stacked splash sound and drip spam.
 	constexpr auto WATER_ENTRY_RADIUS_MIN = 16.0f;
 	constexpr auto WATER_ENTRY_RADIUS_MAX = CLICK(2.0f);
-	constexpr auto WATER_ENTRY_SPLASH_POINT_COUNT_MAX = 3;
+    constexpr auto WATER_ENTRY_SPLASH_POINT_COUNT_MAX = 5;
 	constexpr auto WATER_ENTRY_SPLASH_SETUP_COUNT_MAX = 2;
 	constexpr auto PLAYER_WATER_ENTRY_RADIUS = 64.0f;
 	constexpr auto PLAYER_WATER_ENTRY_SPLASH_SETUP_COUNT = 3;
@@ -195,7 +195,7 @@ namespace TEN::Effects::Splash
 		SetupSplash(&setup, destinationRoomNumber, PLAYER_WATER_ENTRY_SPLASH_SETUP_COUNT);
 	}
 
-	void SpawnWaterEntrySplash(const ItemInfo& item, int sourceRoomNumber, int destinationRoomNumber, float verticalVelocity, int splashPointCountMax)
+	void SpawnWaterEntrySplash(const ItemInfo& item, int sourceRoomNumber, int destinationRoomNumber, float verticalVelocity)
 	{
 		auto waterHeight = GetWaterEntryHeight(sourceRoomNumber, destinationRoomNumber, item.Pose.Position, verticalVelocity);
 		if (!waterHeight.has_value())
@@ -222,38 +222,11 @@ namespace TEN::Effects::Splash
 			return pointA.Radius > pointB.Radius;
 		});
 
-		splashPointCountMax = std::clamp(splashPointCountMax, 1, WATER_ENTRY_SPLASH_POINT_COUNT_MAX);
-		if (splashPointCountMax == 1)
-			points[0].Position = (Vector3)bounds.Center;
-
-		auto selectedPoints = std::vector<WaterEntrySplashPoint>{};
-
-		for (const auto& point : points)
-		{
-			bool overlapsSelectedPoint = false;
-			for (const auto& selectedPoint : selectedPoints)
-			{
-				float dx = point.Position.x - selectedPoint.Position.x;
-				float dz = point.Position.z - selectedPoint.Position.z;
-				float separation = (point.Radius + selectedPoint.Radius) / 2.0f;
-
-				if ((dx * dx) + (dz * dz) < SQUARE(separation))
-				{
-					overlapsSelectedPoint = true;
-					break;
-				}
-			}
-
-			if (overlapsSelectedPoint)
-				continue;
-
-			selectedPoints.push_back(point);
-			if (selectedPoints.size() >= splashPointCountMax)
-				break;
-		}
+        if (points.size() > WATER_ENTRY_SPLASH_POINT_COUNT_MAX)
+            points.resize(WATER_ENTRY_SPLASH_POINT_COUNT_MAX);
 
 		float splashPower = std::clamp(verticalVelocity * 2.0f, WATER_ENTRY_RADIUS_MIN, 256.0f);
-		for (const auto& point : selectedPoints)
+		for (const auto& point : points)
 		{
 			auto setup = SplashEffectSetup{};
 			setup.Position = Vector3(point.Position.x, *waterHeight - 1.0f, point.Position.z);

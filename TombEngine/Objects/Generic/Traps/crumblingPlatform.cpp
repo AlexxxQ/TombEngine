@@ -40,7 +40,6 @@ namespace TEN::Entities::Traps
 	constexpr auto CRUMBLING_PLATFORM_BUBBLE_SPAWN_CHANCE_MAX = 0.5f; // Higher bubble density near the water surface.
 	constexpr auto CRUMBLING_PLATFORM_BUBBLE_SPAWN_CHANCE_MIN = 0.1f; // Lower bubble density once the platform sinks deeper.
 	constexpr auto CRUMBLING_PLATFORM_BUBBLE_FULL_DENSITY_DEPTH = BLOCK(1.0f); // Depth threshold where bubble spawning switches from max to min density.
-	constexpr auto CRUMBLING_PLATFORM_SPLASH_POINT_COUNT_MAX = 3;
 
 	enum CrumblingPlatformState
 	{
@@ -199,7 +198,7 @@ namespace TEN::Entities::Traps
 
 			if (item.RoomNumber != probedRoomNumber)
 			{
-				SpawnWaterEntrySplash(item, item.RoomNumber, probedRoomNumber, fallVel, CRUMBLING_PLATFORM_SPLASH_POINT_COUNT_MAX);
+				SpawnWaterEntrySplash(item, item.RoomNumber, probedRoomNumber, fallVel);
 
 				ItemNewRoom(itemNumber, probedRoomNumber);
 			}

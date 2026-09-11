@@ -6,6 +6,8 @@
 #include "Game/collision/collide_room.h"
 #include "Game/collision/Point.h"
 #include "Game/effects/effects.h"
+#include "Game/effects/Splash.h"
+#include "Game/items.h"
 #include "Game/Lara/lara.h"
 #include "Game/Setup.h"
 #include "Math/Math.h"
@@ -13,6 +15,7 @@
 #include "Specific/level.h"
 
 using namespace TEN::Collision::Point;
+using namespace TEN::Effects::Splash;
 using namespace TEN::Math;
 
 namespace TEN::Entities::Traps
@@ -63,6 +66,13 @@ namespace TEN::Entities::Traps
 
 			int vPos = item.Pose.Position.y;
 			auto pointColl = GetPointCollision(item);
+
+            int probedRoomNumber = pointColl.GetRoomNumber();
+            if (item.RoomNumber != probedRoomNumber)
+            {
+                SpawnWaterEntrySplash(item, item.RoomNumber, probedRoomNumber, item.Animation.Velocity.y);
+                ItemNewRoom(itemNumber, probedRoomNumber);
+            }
 
 			// Impale floor.
 			if ((pointColl.GetFloorHeight() - vPos) <= DAMOCLES_SWORD_IMPALE_DEPTH)
