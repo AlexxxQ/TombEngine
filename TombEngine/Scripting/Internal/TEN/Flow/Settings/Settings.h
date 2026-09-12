@@ -75,6 +75,9 @@ namespace TEN::Scripting
 		int			RicochetCount		= 8;
 		bool		RicochetSound		= true;
 		bool		ExplosionShockwave	= true;
+        bool FallingObjectSplashes = true;
+        bool FlyingCreatureSplashes = true;
+        bool GroundCreatureSplashes = true;
 
 		static void Register(sol::table& parent);
 	};

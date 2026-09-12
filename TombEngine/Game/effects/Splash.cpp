@@ -7,7 +7,9 @@
 #include "Game/effects/Ripple.h"
 #include "Game/items.h"
 #include "Game/room.h"
+#include "Game/Setup.h"
 #include "Math/Objects/GameBoundingBox.h"
+#include "Scripting/Include/Flow/ScriptInterfaceFlowHandler.h"
 #include "Sound/sound.h"
 
 using namespace TEN::Collision::Point;
@@ -30,6 +32,19 @@ namespace TEN::Effects::Splash
 		Vector3 Position = Vector3::Zero;
 		float Radius = 0.0f;
 	};
+
+    static bool AreItemWaterEffectsEnabled(const ItemInfo& item)
+    {
+        if (item.IsLara())
+            return true;
+
+        const auto& effects = g_GameFlow->GetSettings()->Effects;
+        if (!item.IsCreature())
+            return effects.FallingObjectSplashes;
+
+        return Objects[item.ObjectNumber].LotType == LotType::Flyer ?
+            effects.FlyingCreatureSplashes : effects.GroundCreatureSplashes;
+    }
 
 	static std::optional<int> GetWaterEntryHeight(int sourceRoomNumber, int destinationRoomNumber, const Vector3i& position, float verticalVelocity)
 	{
@@ -197,9 +212,23 @@ namespace TEN::Effects::Splash
 
 	void SpawnWaterEntrySplash(const ItemInfo& item, int sourceRoomNumber, int destinationRoomNumber, float verticalVelocity)
 	{
+        if (!AreItemWaterEffectsEnabled(item))
+            return;
+
 		auto waterHeight = GetWaterEntryHeight(sourceRoomNumber, destinationRoomNumber, item.Pose.Position, verticalVelocity);
 		if (!waterHeight.has_value())
 			return;
+
+        SpawnWaterImpactSplash(item, destinationRoomNumber, *waterHeight, verticalVelocity);
+    }
+
+    void SpawnWaterImpactSplash(const ItemInfo& item, int roomNumber, int waterHeight, float verticalVelocity)
+    {
+        if (!AreItemWaterEffectsEnabled(item) || waterHeight == NO_HEIGHT || verticalVelocity <= 0.0f ||
+            !TestEnvironment(ENV_FLAG_WATER, roomNumber) || TestEnvironment(ENV_FLAG_SWAMP, roomNumber))
+        {
+            return;
+        }
 
 		auto bounds = item.GetAabb();
 		auto extents = (Vector3)bounds.Extents;
@@ -229,10 +258,10 @@ namespace TEN::Effects::Splash
 		for (const auto& point : points)
 		{
 			auto setup = SplashEffectSetup{};
-			setup.Position = Vector3(point.Position.x, *waterHeight - 1.0f, point.Position.z);
+			setup.Position = Vector3(point.Position.x, waterHeight - 1.0f, point.Position.z);
 			setup.SplashPower = splashPower;
 			setup.InnerRadius = point.Radius * Random::GenerateFloat(0.9f, 1.1f);
-			SetupSplash(&setup, destinationRoomNumber, WATER_ENTRY_SPLASH_SETUP_COUNT_MAX);
+			SetupSplash(&setup, roomNumber, WATER_ENTRY_SPLASH_SETUP_COUNT_MAX);
 		}
 	}
 
@@ -244,6 +273,9 @@ namespace TEN::Effects::Splash
 
 	void SpawnWadeWaterEffects(const ItemInfo& item, int roomNumber, int waterHeight, bool isIdle)
 	{
+        if (!AreItemWaterEffectsEnabled(item))
+            return;
+
 		if (!TestWadeWaterEffectFrame(item))
 			return;
 

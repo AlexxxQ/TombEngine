@@ -14,7 +14,7 @@ namespace TEN::Effects::Ripple
 
 	std::vector<Ripple> Ripples = {};
 
-	void SpawnRipple(const Vector3& pos, int roomNumber, float size, int flags, const Vector3& normal, const Vector4& color, float finalSizeScale)
+	void SpawnRipple(const Vector3& pos, int roomNumber, float size, int flags, const Vector3& normal, const Vector4& color, float finalSizeScale, float finalSize, float expansionSpeed)
 	{
 		constexpr auto LIFE_WATER_SURFACE_MAX = 1.0f;
 		constexpr auto LIFE_WATER_SURFACE_MIN = LIFE_WATER_SURFACE_MAX / 2;
@@ -42,14 +42,23 @@ namespace TEN::Effects::Ripple
 		ripple.Size = size;
         float baseSizeStep = (flags & ((int)RippleFlags::SlowFade | (int)RippleFlags::OnGround)) ? SIZE_STEP_SMALL : SIZE_STEP_LARGE;
         ripple.SizeStep = baseSizeStep + (std::clamp(finalSizeScale, 1.0f, 2.0f) - 1.0f) * (size / ripple.LifeMax + baseSizeStep);
+        if (finalSize > 0.0f)
+        {
+            ripple.SizeMax = std::max(size, finalSize);
+            ripple.SizeStep = (ripple.SizeMax - size) / ripple.LifeMax;
+            if (expansionSpeed > 0.0f && ripple.SizeMax > size)
+            {
+                ripple.SizeStep = expansionSpeed / FPS;
+                ripple.Life = ripple.LifeMax = std::max(1.0f, std::ceil((ripple.SizeMax - size) / ripple.SizeStep));
+                fadeDurationInSec *= ripple.LifeMax / round(lifeInSec * FPS);
+            }
+        }
 		ripple.FadeDuration = round(fadeDurationInSec * FPS);
 		ripple.Flags = flags;
 	}
 
 	void UpdateRipples()
 	{
-		constexpr auto RIPPLE_SIZE_MAX = BLOCK(0.5f);
-
 		if (Ripples.empty())
 			return;
 
@@ -61,8 +70,8 @@ namespace TEN::Effects::Ripple
 			ripple.StoreInterpolationData();
 
 			// Update size.
-			if (ripple.Size < RIPPLE_SIZE_MAX)
-				ripple.Size += ripple.SizeStep;
+			if (ripple.Size < ripple.SizeMax)
+                ripple.Size = std::min(ripple.Size + ripple.SizeStep, ripple.SizeMax);
 
 			float lifeFullOpacity = ripple.LifeMax - (ripple.FadeDuration * 0.75f);
 			float lifeStartFading = ripple.FadeDuration;

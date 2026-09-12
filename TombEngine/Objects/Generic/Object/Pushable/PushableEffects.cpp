@@ -16,21 +16,24 @@ namespace TEN::Entities::Generic
 {
 	void HandlePushableRippleEffect(ItemInfo& pushableItem)
 	{
-		constexpr auto FRAMES_BETWEEN_RIPPLES		 = 8;
-		constexpr auto FRAMES_BETWEEN_RIPPLES_SOUNDS = 30;
+		constexpr auto FRAMES_BETWEEN_RIPPLES		 = 32;
+		constexpr auto FRAMES_BETWEEN_RIPPLES_SOUNDS = 32;
+        constexpr auto RIPPLE_SIZE_START = 512.0f;
+        constexpr auto RIPPLE_SIZE_END = 2024.0f;
+        constexpr auto RIPPLE_EXPANSION_SPEED = 256.0f; // Radius units per second.
 
 		auto& pushable = GetPushableInfo(pushableItem);
 
 		// TODO: cleanup.
-		// TODO: Enhace the effect to make the ripples increase their size through the time.
 		if (pushable.WaterSurfaceHeight != NO_HEIGHT)
 		{
 			if (fmod(GlobalCounter, FRAMES_BETWEEN_RIPPLES) <= 0.0f)
 				SpawnRipple(
 					Vector3(pushableItem.Pose.Position.x, pushable.WaterSurfaceHeight, pushableItem.Pose.Position.z),
 					pushableItem.RoomNumber,
-					GameBoundingBox(&pushableItem).GetWidth() + (GetRandomControl() & 15),
-					(int)RippleFlags::SlowFade | (int)RippleFlags::LowOpacity);
+                    RIPPLE_SIZE_START,
+                    (int)RippleFlags::SlowFade | (int)RippleFlags::LowOpacity,
+                    Vector3::Down, RIPPLE_DEFAULT_COLOR, 1.0f, RIPPLE_SIZE_END, RIPPLE_EXPANSION_SPEED);
 			
 			if (fmod(GlobalCounter, FRAMES_BETWEEN_RIPPLES_SOUNDS) <= 0.0f)
 				pushable.SoundState = PushableSoundState::Wade;
@@ -41,11 +44,8 @@ namespace TEN::Entities::Generic
 	{
 		auto& pushable = GetPushableInfo(pushableItem);
 
-		SplashSetup.Position = Vector3(pushableItem.Pose.Position.x, pushable.WaterSurfaceHeight - 1, pushableItem.Pose.Position.z);
-		SplashSetup.SplashPower = pushableItem.Animation.Velocity.y * 2;
-		SplashSetup.InnerRadius = 250;
-
-		SetupSplash(&SplashSetup, pushableItem.RoomNumber);
+        SpawnWaterImpactSplash(pushableItem, pushableItem.RoomNumber,
+            pushable.WaterSurfaceHeight, pushableItem.Animation.Velocity.y);
 	}
 
 	void SpawnPushableBubbles(const ItemInfo& pushableItem)

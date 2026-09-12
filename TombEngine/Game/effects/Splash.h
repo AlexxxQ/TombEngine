@@ -63,6 +63,7 @@ namespace TEN::Effects::Splash
 	void ClearSplashes();
 	void SpawnPlayerWaterEntrySplash(const ItemInfo& item, int sourceRoomNumber, int destinationRoomNumber, float verticalVelocity);
 	void SpawnWaterEntrySplash(const ItemInfo& item, int sourceRoomNumber, int destinationRoomNumber, float verticalVelocity);
+    void SpawnWaterImpactSplash(const ItemInfo& item, int roomNumber, int waterHeight, float verticalVelocity);
 	void SpawnWadeWaterEffects(const ItemInfo& item, int roomNumber, int waterHeight, bool isIdle = false);
 	void Splash(ItemInfo* item);
 	void Splash(Vector3i position, int roomNumber, int power);
