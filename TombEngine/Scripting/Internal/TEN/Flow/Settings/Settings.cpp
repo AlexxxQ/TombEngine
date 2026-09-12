@@ -327,8 +327,8 @@ namespace TEN::Scripting
         // @tfield[opt=true] bool flyingCreatureSplashes Enables water splashes for flying creatures, including falling corpses. Does not affect Lara.
         "flyingCreatureSplashes", &EffectsSettings::FlyingCreatureSplashes,
 
-        // @tfield[opt=true] bool groundCreatureSplashes Enables water-entry splashes and shallow-water ripples for ground creatures. Does not affect Lara.
-        "groundCreatureSplashes", &EffectsSettings::GroundCreatureSplashes);
+        // @tfield[opt=true] bool landCreatureSplashes Enables water-entry splashes and shallow-water ripples for ground creatures. Does not affect Lara.
+        "landCreatureSplashes", &EffectsSettings::LandCreatureSplashes);
 	}
 
 	/// Graphics

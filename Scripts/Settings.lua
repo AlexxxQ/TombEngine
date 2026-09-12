@@ -26,7 +26,7 @@ local settings = Flow.Settings.new()
 	settings.Effects.explosionShockwave = true
     settings.Effects.fallingObjectSplashes = true
     settings.Effects.flyingCreatureSplashes = true
-    settings.Effects.groundCreatureSplashes = true
+    settings.Effects.landCreatureSplashes = true
 	
 	settings.Flare.color = Color(128, 64, 0)
 	settings.Flare.offset = Vec3(0, 0, 41)

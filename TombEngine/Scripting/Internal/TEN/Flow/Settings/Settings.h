@@ -77,7 +77,7 @@ namespace TEN::Scripting
 		bool		ExplosionShockwave	= true;
         bool FallingObjectSplashes = true;
         bool FlyingCreatureSplashes = true;
-        bool GroundCreatureSplashes = true;
+        bool LandCreatureSplashes = true;
 
 		static void Register(sol::table& parent);
 	};

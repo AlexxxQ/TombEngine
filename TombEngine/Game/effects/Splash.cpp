@@ -43,7 +43,7 @@ namespace TEN::Effects::Splash
             return effects.FallingObjectSplashes;
 
         return Objects[item.ObjectNumber].LotType == LotType::Flyer ?
-            effects.FlyingCreatureSplashes : effects.GroundCreatureSplashes;
+            effects.FlyingCreatureSplashes : effects.LandCreatureSplashes;
     }
 
 	static std::optional<int> GetWaterEntryHeight(int sourceRoomNumber, int destinationRoomNumber, const Vector3i& position, float verticalVelocity)
