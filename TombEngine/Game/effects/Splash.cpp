@@ -209,26 +209,9 @@ namespace TEN::Effects::Splash
 		SetupSplash(&setup, destinationRoomNumber, PLAYER_WATER_ENTRY_SPLASH_SETUP_COUNT);
 	}
 
-	void SpawnWaterEntrySplash(const ItemInfo& item, int sourceRoomNumber, int destinationRoomNumber, float verticalVelocity)
-	{
-        if (!AreItemWaterEffectsEnabled(item))
-            return;
-
-		auto waterHeight = GetWaterEntryHeight(sourceRoomNumber, destinationRoomNumber, item.Pose.Position, verticalVelocity);
-		if (!waterHeight.has_value())
-			return;
-
-        SpawnWaterImpactSplash(item, destinationRoomNumber, *waterHeight, verticalVelocity);
-    }
-
-    void SpawnWaterImpactSplash(const ItemInfo& item, int roomNumber, int waterHeight, float verticalVelocity)
+    // Both entry paths validate the impact before generating effects.
+    static void EmitWaterImpactSplash(const ItemInfo& item, int roomNumber, int waterHeight, float verticalVelocity)
     {
-        if (!AreItemWaterEffectsEnabled(item) || waterHeight == NO_HEIGHT || verticalVelocity <= 0.0f ||
-            !TestEnvironment(ENV_FLAG_WATER, roomNumber) || TestEnvironment(ENV_FLAG_SWAMP, roomNumber))
-        {
-            return;
-        }
-
 		auto bounds = item.GetAabb();
 		auto extents = (Vector3)bounds.Extents;
 		float boundsRadius = Vector2(extents.x, extents.z).Length();
@@ -263,6 +246,29 @@ namespace TEN::Effects::Splash
 			SetupSplash(&setup, roomNumber, WATER_ENTRY_SPLASH_SETUP_COUNT_MAX);
 		}
 	}
+
+    void SpawnWaterEntrySplash(const ItemInfo& item, int sourceRoomNumber, int destinationRoomNumber, float verticalVelocity)
+    {
+        if (!AreItemWaterEffectsEnabled(item))
+            return;
+
+        auto waterHeight = GetWaterEntryHeight(sourceRoomNumber, destinationRoomNumber, item.Pose.Position, verticalVelocity);
+        if (!waterHeight.has_value())
+            return;
+
+        EmitWaterImpactSplash(item, destinationRoomNumber, *waterHeight, verticalVelocity);
+    }
+
+    void SpawnWaterImpactSplash(const ItemInfo& item, int roomNumber, int waterHeight, float verticalVelocity)
+    {
+        if (!AreItemWaterEffectsEnabled(item) || waterHeight == NO_HEIGHT || verticalVelocity <= 0.0f ||
+            !TestEnvironment(ENV_FLAG_WATER, roomNumber) || TestEnvironment(ENV_FLAG_SWAMP, roomNumber))
+        {
+            return;
+        }
+
+        EmitWaterImpactSplash(item, roomNumber, waterHeight, verticalVelocity);
+    }
 
 	static bool TestWadeWaterEffectFrame(const ItemInfo& item)
 	{
