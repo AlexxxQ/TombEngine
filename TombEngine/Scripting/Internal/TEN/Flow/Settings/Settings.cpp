@@ -321,11 +321,8 @@ namespace TEN::Scripting
 		// @tfield[opt=true] bool explosionShockwave Enables shockwave generation for generic explosion effects.
         "explosionShockwave", &EffectsSettings::ExplosionShockwave,
 
-        // @tfield[opt=true] bool fallingObjectSplashes Enables water-entry splashes for falling objects. Does not affect Lara.
+        // @tfield[opt=true] bool fallingObjectSplashes Enables water-entry splashes for falling objects and flying creatures, including falling corpses. Does not affect Lara.
         "fallingObjectSplashes", &EffectsSettings::FallingObjectSplashes,
-
-        // @tfield[opt=true] bool flyingCreatureSplashes Enables water splashes for flying creatures, including falling corpses. Does not affect Lara.
-        "flyingCreatureSplashes", &EffectsSettings::FlyingCreatureSplashes,
 
         // @tfield[opt=true] bool landCreatureSplashes Enables water-entry splashes and shallow-water ripples for ground creatures. Does not affect Lara.
         "landCreatureSplashes", &EffectsSettings::LandCreatureSplashes);

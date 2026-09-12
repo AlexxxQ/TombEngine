@@ -25,7 +25,6 @@ local settings = Flow.Settings.new()
 	settings.Effects.ricochetSound = true
 	settings.Effects.explosionShockwave = true
     settings.Effects.fallingObjectSplashes = true
-    settings.Effects.flyingCreatureSplashes = true
     settings.Effects.landCreatureSplashes = true
 	
 	settings.Flare.color = Color(128, 64, 0)

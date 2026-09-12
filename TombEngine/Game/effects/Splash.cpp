@@ -39,11 +39,10 @@ namespace TEN::Effects::Splash
             return true;
 
         const auto& effects = g_GameFlow->GetSettings()->Effects;
-        if (!item.IsCreature())
+        if (!item.IsCreature() || Objects[item.ObjectNumber].LotType == LotType::Flyer)
             return effects.FallingObjectSplashes;
 
-        return Objects[item.ObjectNumber].LotType == LotType::Flyer ?
-            effects.FlyingCreatureSplashes : effects.LandCreatureSplashes;
+        return effects.LandCreatureSplashes;
     }
 
 	static std::optional<int> GetWaterEntryHeight(int sourceRoomNumber, int destinationRoomNumber, const Vector3i& position, float verticalVelocity)

@@ -76,7 +76,6 @@ namespace TEN::Scripting
 		bool		RicochetSound		= true;
 		bool		ExplosionShockwave	= true;
         bool FallingObjectSplashes = true;
-        bool FlyingCreatureSplashes = true;
         bool LandCreatureSplashes = true;
 
 		static void Register(sol::table& parent);
