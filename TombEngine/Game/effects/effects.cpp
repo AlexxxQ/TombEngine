@@ -2036,9 +2036,20 @@ void SpawnPlayerWaterSurfaceEffects(const ItemInfo& item, int waterHeight, int w
 	// Spawn ripple.
 	else if (isWater1)
 	{
-		SpawnWadeWaterEffects(
-			item, pointColl1.GetRoomNumber(), waterHeight,
-			item.Animation.ActiveState == LS_IDLE);
+		if (Wibble & 0xF)
+			return;
+
+		if (Random::TestProbability(1 / 2000.0f) && item.Animation.ActiveState == LS_IDLE)
+			return;
+
+		int flags = (item.Animation.ActiveState == LS_IDLE) ?
+			(int)RippleFlags::LowOpacity :
+			(int)RippleFlags::SlowFade | (int)RippleFlags::LowOpacity;
+
+		SpawnRipple(
+			Vector3(item.Pose.Position.x, waterHeight - 1, item.Pose.Position.z),
+			item.RoomNumber, Random::GenerateFloat(112.0f, 128.0f),
+			flags);
 	}
 }
 
