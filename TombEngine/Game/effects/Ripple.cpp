@@ -14,7 +14,7 @@ namespace TEN::Effects::Ripple
 
 	std::vector<Ripple> Ripples = {};
 
-	void SpawnRipple(const Vector3& pos, int roomNumber, float size, int flags, const Vector3& normal, const Vector4& color, float finalSizeScale, float finalSize, float expansionSpeed)
+	void SpawnRipple(const Vector3& pos, int roomNumber, float size, int flags, const Vector3& normal, const Vector4& color, float finalSize, float expansionSpeed)
 	{
 		constexpr auto LIFE_WATER_SURFACE_MAX = 1.0f;
 		constexpr auto LIFE_WATER_SURFACE_MIN = LIFE_WATER_SURFACE_MAX / 2;
@@ -40,8 +40,7 @@ namespace TEN::Effects::Ripple
 		ripple.Life =
 		ripple.LifeMax = round(lifeInSec * FPS);
 		ripple.Size = size;
-        float baseSizeStep = (flags & ((int)RippleFlags::SlowFade | (int)RippleFlags::OnGround)) ? SIZE_STEP_SMALL : SIZE_STEP_LARGE;
-        ripple.SizeStep = baseSizeStep + (std::clamp(finalSizeScale, 1.0f, 2.0f) - 1.0f) * (size / ripple.LifeMax + baseSizeStep);
+        ripple.SizeStep = (flags & ((int)RippleFlags::SlowFade | (int)RippleFlags::OnGround)) ? SIZE_STEP_SMALL : SIZE_STEP_LARGE;
         if (finalSize > 0.0f)
         {
             ripple.SizeMax = std::max(size, finalSize);

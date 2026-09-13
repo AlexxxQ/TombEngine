@@ -33,7 +33,7 @@ namespace TEN::Entities::Generic
 					pushableItem.RoomNumber,
                     RIPPLE_SIZE_START,
                     (int)RippleFlags::SlowFade | (int)RippleFlags::LowOpacity,
-                    Vector3::Down, RIPPLE_DEFAULT_COLOR, 1.0f, RIPPLE_SIZE_END, RIPPLE_EXPANSION_SPEED);
+                    Vector3::Down, RIPPLE_DEFAULT_COLOR, RIPPLE_SIZE_END, RIPPLE_EXPANSION_SPEED);
 			
 			if (fmod(GlobalCounter, FRAMES_BETWEEN_RIPPLES_SOUNDS) <= 0.0f)
 				pushable.SoundState = PushableSoundState::Wade;

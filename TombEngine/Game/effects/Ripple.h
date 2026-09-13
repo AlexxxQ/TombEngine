@@ -44,7 +44,7 @@ namespace TEN::Effects::Ripple
 
 	extern std::vector<Ripple> Ripples;
 
-	void SpawnRipple(const Vector3& pos, int roomNumber, float size, int flags = 0, const Vector3& normal = Vector3::Down, const Vector4& color = RIPPLE_DEFAULT_COLOR, float finalSizeScale = 1.0f, float finalSize = 0.0f, float expansionSpeed = 0.0f);
+	void SpawnRipple(const Vector3& pos, int roomNumber, float size, int flags = 0, const Vector3& normal = Vector3::Down, const Vector4& color = RIPPLE_DEFAULT_COLOR, float finalSize = 0.0f, float expansionSpeed = 0.0f);
 
 	void UpdateRipples();
 	void ClearRipples();
