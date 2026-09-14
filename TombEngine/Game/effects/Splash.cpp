@@ -24,8 +24,6 @@ namespace TEN::Effects::Splash
 	constexpr auto WATER_ENTRY_RADIUS_MAX = CLICK(2.0f);
     constexpr auto WATER_ENTRY_SPLASH_POINT_COUNT_MAX = 5;
 	constexpr auto WATER_ENTRY_SPLASH_SETUP_COUNT_MAX = 2;
-	constexpr auto PLAYER_WATER_ENTRY_RADIUS = 64.0f;
-	constexpr auto PLAYER_WATER_ENTRY_SPLASH_SETUP_COUNT = 3;
 
 	struct WaterEntrySplashPoint
 	{
@@ -194,19 +192,6 @@ namespace TEN::Effects::Splash
 
 		for (auto& splash : SplashEffects)
 			splash = {};
-	}
-
-	void SpawnPlayerWaterEntrySplash(const ItemInfo& item, int sourceRoomNumber, int destinationRoomNumber, float verticalVelocity)
-	{
-		auto waterHeight = GetWaterEntryHeight(sourceRoomNumber, destinationRoomNumber, item.Pose.Position, verticalVelocity);
-		if (!waterHeight.has_value())
-			return;
-
-		auto setup = SplashEffectSetup{};
-		setup.Position = Vector3(item.Pose.Position.x, *waterHeight - 1.0f, item.Pose.Position.z);
-		setup.SplashPower = std::clamp(verticalVelocity, WATER_ENTRY_RADIUS_MIN, 256.0f);
-		setup.InnerRadius = PLAYER_WATER_ENTRY_RADIUS;
-		SetupSplash(&setup, destinationRoomNumber, PLAYER_WATER_ENTRY_SPLASH_SETUP_COUNT);
 	}
 
     // Both entry paths validate the impact before generating effects.

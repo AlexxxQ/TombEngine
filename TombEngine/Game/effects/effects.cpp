@@ -2028,9 +2028,11 @@ void SpawnPlayerWaterSurfaceEffects(const ItemInfo& item, int waterHeight, int w
 		item.Animation.Velocity.y > 0.0f && SplashCount == 0 &&
 		player.Control.WaterStatus != WaterStatus::TreadWater)
 	{
-		SpawnPlayerWaterEntrySplash(
-			item, pointColl0.GetRoomNumber(), pointColl1.GetRoomNumber(),
-			item.Animation.Velocity.y);
+		SplashSetup.Position = Vector3(item.Pose.Position.x, waterHeight - 1, item.Pose.Position.z);
+		SplashSetup.InnerRadius = 16;
+		SplashSetup.SplashPower = item.Animation.Velocity.z;
+
+		SetupSplash(&SplashSetup, pointColl0.GetRoomNumber());
 		SplashCount = 16;
 	}
 	// Spawn ripple.
