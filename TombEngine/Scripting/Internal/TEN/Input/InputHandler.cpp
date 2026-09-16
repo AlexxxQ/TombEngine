@@ -147,12 +147,20 @@ namespace TEN::Scripting::Input
 		ActionQueueMap[(ActionID)actionID] = ActionQueueState::Clear;
 	}
 
-	/// Clear all action keys.
+	/// Clear all action keys except an optional action key.
 	// @function ClearAllKeys
-	static void ClearAllKeys()
+	// @tparam[opt] Input.ActionID exceptActionID Action ID to keep enabled.
+	static void ClearAllKeys(sol::optional<int> exceptActionID)
 	{
 		for (auto& [keyActionID, queue] : ActionQueueMap)
+		{
+			if (exceptActionID.has_value() &&
+				IsValidAction(exceptActionID.value()) &&
+				keyActionID == (ActionID)exceptActionID.value())
+				continue;
+
 			queue = ActionQueueState::Clear;
+		}
 	}
 
 	/// Vibrate the game controller if the function is available and the setting is on.

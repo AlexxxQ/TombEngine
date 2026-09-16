@@ -323,6 +323,12 @@ GameStatus FreezePhase()
 	HandleControls(false);
 	g_GameScript->OnFreeze();
 
+	// Keep level/global loop callbacks alive while the world is frozen. The
+	// freeze phase deliberately skips item and physics updates below, but UI
+	// and statistics logic implemented in OnLoop still needs a game tick.
+	g_GameScript->OnLoop(DELTA_TIME, false);
+	g_GameScript->OnLoop(DELTA_TIME, true);
+
 	// Partially update scene if not using full freeze mode.
 	if (g_GameFlow->LastFreezeMode != FreezeMode::Full)
 	{
@@ -355,7 +361,19 @@ GameStatus FreezePhase()
 	// Update last freeze mode again, as it may have been changed in a script.
 	g_GameFlow->LastFreezeMode = g_GameFlow->CurrentFreezeMode;
 
-	return GameStatus::Normal;
+	// End Level nodes set NextLevel from the loop event. Normally this is
+	// consumed by GamePhase(), which is bypassed while frozen.
+	const auto gameStatus = HandleGlobalInputEvents(false);
+	if (gameStatus != GameStatus::Normal)
+	{
+		// Freeze state belongs to the outgoing level. Otherwise a level entered
+		// by End Level inherits Full freeze mode and cannot start its control loop.
+		g_GameFlow->CurrentFreezeMode = FreezeMode::None;
+		g_GameFlow->LastFreezeMode = FreezeMode::None;
+		g_GameScript->OnEnd(gameStatus);
+	}
+
+	return gameStatus;
 }
 
 GameStatus ControlPhase(bool insideMenu)
