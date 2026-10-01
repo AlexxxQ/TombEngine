@@ -2275,11 +2275,12 @@ namespace TEN::Renderer
 
 			DrawDebugRenderTargets(view);
 
-			// HACK: Strings in the title level are drawn in a separate menu pass, so we bypass it here.
+			// Strings and negative priority display sprites in the title level are drawn in a separate menu pass.
 			if (CurrentLevel != 0)
+			{
 				DrawAllStrings();
-
-			DrawDisplaySprites(view, true);
+				DrawDisplaySprites(view, true);
+			}
 		}
 
 		time2 = std::chrono::high_resolution_clock::now();

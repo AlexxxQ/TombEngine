@@ -1494,6 +1494,12 @@ namespace TEN::Renderer
 		ApplyAntialiasing(_renderTarget.get(), _gameCamera);
 
 		CopyRenderTarget(_renderTarget.get(), renderTarget, _gameCamera);
+
+		if (CurrentLevel == 0)
+		{
+			CollectDisplaySprites(_gameCamera);
+			DrawDisplaySprites(_gameCamera, true);
+		}
 	}
 
 	void Renderer::SetLoadingScreen(const std::string& fileName)
