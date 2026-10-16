@@ -83,6 +83,8 @@ void AnimateShotgun(ItemInfo& laraItem, LaraWeaponType weaponType)
 
 	if (player.LeftArm.GunSmoke > 0)
 	{
+		g_Renderer.UpdateLaraAnimations(true);
+
 		auto relOffset = g_GameFlow->GetSettings()->Weapons[(int)weaponType - 1].MuzzleOffset.ToVector3();
 		auto pos = GetJointPosition(&laraItem, LM_RHAND, relOffset);
 
@@ -417,6 +419,8 @@ bool FireShotgun(ItemInfo& laraItem)
 	{
 		if (!ammo.HasInfinite())
 			ammo--;
+
+		g_Renderer.UpdateLaraAnimations(true);
 
 		auto offset = g_GameFlow->GetSettings()->Weapons[(int)LaraWeaponType::Shotgun - 1].MuzzleOffset.ToVector3i();
 
