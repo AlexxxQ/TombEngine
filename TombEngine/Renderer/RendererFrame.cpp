@@ -607,6 +607,10 @@ namespace TEN::Renderer
 			auto& rendererStatic = rendererRoom.Statics[i];
 			auto& nativeStatic = nativeRoom.mesh[i];
 
+			// Flipmaps swap renderer rooms, so the static's original room number can become stale.
+			// Use the room that currently owns this static for ambient lighting and room-dependent rendering.
+			rendererStatic.RoomNumber = rendererRoom.RoomNumber;
+
 			if (nativeStatic.Dirty || _invalidateCache)
 			{
 				rendererStatic.ObjectNumber = nativeStatic.Slot;
