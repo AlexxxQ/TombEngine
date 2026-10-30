@@ -3,6 +3,17 @@
 The dates are in European standard format where date is presented as **YYYY-MM-DD**.
 TombEngine releases are located in this repository (alongside with Tomb Editor): <https://github.com/TombEngine/TombEditorReleases>
 
+## [Version 2.1]
+
+### New features
+
+### Bug fixes
+
+### Lua API Changes
+
+* Added `ParticleGroup:IsActive` method to check if the group's emitter is currently running.
+* Added `ParticleGroup:IsValid` method to check if the group still exists and is usable.
+
 ## [Version 2.0]
 
 ### New features
